@@ -1,0 +1,66 @@
+@import "variables"
+
+.g-dashboards-config-lead
+  color $dashboardMuted
+  max-width 720px
+
+.g-dashboards-config-table
+  vertical-align middle
+
+  td
+    vertical-align middle
+
+  .g-dashboards-col-enabled
+    width 80px
+    text-align center
+
+  .g-dashboards-col-media
+    width 76px
+
+  .g-dashboards-col-key
+    width 200px
+
+  .g-dashboards-col-actions
+    width 110px
+    white-space nowrap
+    text-align right
+
+    a
+      margin-left 10px
+      font-size 16px
+      color $dashboardMuted
+
+      &:hover
+        color $dashboardInk
+
+    .g-dashboard-delete:hover
+      color #c9302c
+
+.g-dashboard-config-thumb
+  width 60px
+  height 36px
+  object-fit cover
+  border 1px solid $dashboardBorder
+  border-radius 2px
+
+.g-dashboard-config-glyph
+  font-size 24px
+  color $dashboardMuted
+
+.g-dashboard-config-name
+  font-weight 600
+  color $dashboardInk
+
+.g-dashboard-config-description
+  font-size 13px
+  color $dashboardMuted
+
+.g-dashboard-config-warning
+  margin-top 4px
+  font-size 12px
+  color $dashboardWarning
+
+.g-dashboard-row-unavailable
+  .g-dashboard-config-name
+  .g-dashboard-config-description
+    opacity 0.65

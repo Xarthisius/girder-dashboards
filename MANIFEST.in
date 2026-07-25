@@ -1,0 +1,7 @@
+prune girder_dashboards/web_client
+include girder_dashboards/web_client/dist/girder-plugin-dashboards.umd.cjs
+include girder_dashboards/web_client/dist/style.css
+prune girder_dashboards/tests
+prune test
+exclude MANIFEST.in requirements-dev.txt tox.ini ruff.toml
+include README.md

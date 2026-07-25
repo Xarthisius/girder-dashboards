@@ -1,0 +1,111 @@
+@import "variables"
+
+.g-dashboards-page
+  .g-dashboards-header
+    position relative
+    margin-bottom 20px
+
+    .g-dashboards-title
+      margin 0
+      font-size 26px
+      color $dashboardInk
+
+      i
+        color $dashboardMuted
+        margin-right 4px
+
+    .g-dashboards-lead
+      margin 6px 0 0
+      color $dashboardMuted
+
+    .g-dashboards-configure-link
+      position absolute
+      top 4px
+      right 0
+
+.g-dashboards-empty
+  padding 24px
+  border 1px dashed $dashboardBorder
+  border-radius $dashboardRadius
+  background $dashboardCanvas
+  color $dashboardMuted
+  text-align center
+
+.g-dashboard-cards
+  display grid
+  grid-template-columns repeat(auto-fill, minmax(280px, 1fr))
+  grid-gap 18px
+
+.g-dashboard-card
+  display flex
+  flex-direction column
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+  overflow hidden
+  transition box-shadow 0.15s ease-in-out
+
+  &:hover
+    box-shadow $dashboardShadowHover
+
+.g-dashboard-card-media
+  display block
+  height 150px
+  background $dashboardCanvas
+  text-align center
+  overflow hidden
+
+  img
+    width 100%
+    height 100%
+    object-fit cover
+    display block
+
+  .g-dashboard-card-glyph
+    display block
+    line-height 150px
+    font-size 56px
+    color $dashboardMuted
+
+  &.g-dashboard-card-media-inert
+    pointer-events none
+    opacity 0.55
+
+.g-dashboard-card-body
+  flex 1 1 auto
+  padding 12px 14px
+
+  .g-dashboard-card-title
+    margin 0 0 6px
+    font-size 17px
+    color $dashboardInk
+
+  .g-dashboard-card-description
+    margin 0
+    font-size 13px
+    line-height 1.45
+    color $dashboardMuted
+
+.g-dashboard-card-footer
+  display flex
+  align-items center
+  justify-content space-between
+  padding 10px 14px
+  border-top 1px solid $dashboardBorder
+  background $dashboardCanvas
+
+  .g-dashboard-run
+    font-weight 600
+    color $dashboardAccent
+
+  .g-dashboard-card-inert
+    color $dashboardWarning
+    font-size 13px
+
+  .g-dashboard-configure
+    color $dashboardMuted
+    font-size 16px
+
+    &:hover
+      color $dashboardInk

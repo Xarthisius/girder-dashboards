@@ -1,0 +1,34 @@
+from pathlib import Path
+
+from setuptools import find_packages, setup
+
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text()
+
+girder_version = "5.0.13.dev27"
+
+setup(
+    name="girder-dashboards",
+    version="0.1.0",
+    description="Girder plugin adding lightweight, interactive dashboards",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    author="Kacper Kowalik",
+    license="BSD-3-Clause",
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Environment :: Web Environment",
+        "License :: OSI Approved :: BSD License",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3",
+    ],
+    packages=find_packages(exclude=["girder_dashboards.tests"]),
+    include_package_data=True,
+    python_requires=">=3.10",
+    install_requires=[f"girder>={girder_version}"],
+    entry_points={
+        "girder.plugin": ["dashboards = girder_dashboards:DashboardsPlugin"],
+    },
+    zip_safe=False,
+)

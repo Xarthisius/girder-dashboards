@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.tox/
+venv/
+.venv/
+
+node_modules/
+girder_dashboards/web_client/dist/
+test/browser/screenshots/
+
+# left behind by a local run of the browser-verification sequence
+girder.log

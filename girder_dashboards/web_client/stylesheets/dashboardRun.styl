@@ -1,0 +1,92 @@
+@import "variables"
+
+// Under Layout.EMPTY the body container has no padding and no header above it,
+// so the runner is responsible for filling the viewport itself.
+.g-dashboard-runner
+  display flex
+  flex-direction column
+  min-height 100vh
+  background $dashboardCanvas
+
+.g-dashboard-topbar
+  display flex
+  align-items center
+  flex-shrink 0
+  height $dashboardTopbarHeight
+  padding 0 14px
+  background $dashboardInk
+  color #f2f4f6
+
+  a
+    color #cfd6dd
+    text-decoration none
+
+    &:hover
+      color #ffffff
+
+  .g-dashboard-back
+    display inline-flex
+    align-items center
+    padding 5px 10px
+    margin-right 14px
+    border 1px solid rgba(255, 255, 255, 0.25)
+    border-radius $dashboardRadius
+    font-size 13px
+    white-space nowrap
+
+    &:hover
+      background rgba(255, 255, 255, 0.12)
+
+    .g-dashboard-back-label
+      margin-left 5px
+
+  .g-dashboard-topbar-title
+    flex 1 1 auto
+    min-width 0
+    font-size 15px
+    font-weight 600
+    white-space nowrap
+    overflow hidden
+    text-overflow ellipsis
+
+    .g-dashboard-topbar-icon
+      margin-right 6px
+      color #9fb0c0
+
+  .g-dashboard-topbar-actions
+    flex-shrink 0
+
+    a
+      margin-left 12px
+      font-size 16px
+
+.g-dashboard-viewport
+  flex 1 1 auto
+  padding 16px
+
+.g-dashboard-mount
+  height 100%
+
+.g-dashboard-error
+  max-width 520px
+  margin 60px auto
+  padding 24px
+  text-align center
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+
+  > i
+    font-size 34px
+    color $dashboardWarning
+
+  h4
+    margin 12px 0 8px
+    color $dashboardInk
+
+  p
+    color $dashboardMuted
+
+@media (max-width 480px)
+  .g-dashboard-topbar .g-dashboard-back .g-dashboard-back-label
+    display none

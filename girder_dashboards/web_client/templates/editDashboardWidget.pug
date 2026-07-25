@@ -1,0 +1,45 @@
+.modal-dialog
+  .modal-content
+    form#g-dashboard-edit-form.modal-form(role="form")
+      .modal-header
+        button.close(data-dismiss="modal", aria-hidden="true", type="button") &times;
+        h4.modal-title Dashboard settings
+      .modal-body
+        .form-group
+          label.control-label(for="g-dashboard-name") Name
+          input#g-dashboard-name.input-sm.form-control(type="text", value=dashboard.get('name'))
+        .form-group
+          label.control-label(for="g-dashboard-description") Description
+          textarea#g-dashboard-description.form-control(rows="3")= dashboard.get('description')
+        .form-group
+          label.control-label(for="g-dashboard-image") Card image
+          input#g-dashboard-image.input-sm.form-control(
+            type="text",
+            placeholder="URL or data URI; leave empty to show the icon instead",
+            value=dashboard.get('image') || '')
+        .form-group
+          label.control-label(for="g-dashboard-icon") Fallback icon
+          input#g-dashboard-icon.input-sm.form-control(
+            type="text",
+            placeholder="icon-gauge",
+            value=dashboard.get('icon') || '')
+          p.g-dashboard-field-help
+            | Any
+            a(href="https://fontello.com", target="_blank", rel="noopener")  Fontello
+            |  class bundled with Girder, e.g. #[code icon-chart-bar].
+        .form-group
+          label.control-label(for="g-dashboard-settings") Settings
+          textarea#g-dashboard-settings.form-control.g-dashboard-settings-input(rows="6")= settings
+          p.g-dashboard-field-help
+            | JSON object handed to the dashboard when it runs.
+        .checkbox
+          label
+            input#g-dashboard-enabled(type="checkbox", checked=dashboard.get('enabled'))
+            |  Enabled — offer this dashboard to users who can read it
+        .g-validation-failed-message
+      .modal-footer
+        a.btn.btn-sm.btn-default.g-dashboard-reset(href="#", title="Restore the values declared by the plugin that provides this dashboard") Reset to defaults
+        a.btn.btn-sm.btn-default(data-dismiss="modal") Cancel
+        button.g-save-dashboard.btn.btn-sm.btn-primary(type="submit")
+          i.icon-check
+          |  Save

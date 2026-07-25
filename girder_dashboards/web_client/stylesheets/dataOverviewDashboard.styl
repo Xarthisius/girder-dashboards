@@ -1,0 +1,77 @@
+@import "variables"
+
+.g-data-overview
+  max-width 1100px
+  margin 0 auto
+
+.g-overview-stats
+  display grid
+  grid-template-columns repeat(auto-fit, minmax(180px, 1fr))
+  grid-gap 14px
+  margin-bottom 18px
+
+.g-overview-stat
+  position relative
+  padding 16px 18px
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+
+  .g-overview-stat-icon
+    position absolute
+    top 14px
+    right 16px
+    font-size 22px
+    color $dashboardBorder
+
+  .g-overview-stat-value
+    font-size 30px
+    font-weight 600
+    line-height 1.1
+    color $dashboardInk
+
+  .g-overview-stat-label
+    margin-top 2px
+    font-size 12px
+    letter-spacing 0.06em
+    text-transform uppercase
+    color $dashboardMuted
+
+.g-overview-panel
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+  overflow hidden
+
+.g-overview-panel-header
+  display flex
+  align-items baseline
+  justify-content space-between
+  padding 12px 16px
+  border-bottom 1px solid $dashboardBorder
+
+  h4
+    margin 0
+    font-size 15px
+    color $dashboardInk
+
+  .g-overview-panel-note
+    font-size 12px
+    color $dashboardMuted
+
+.g-overview-table
+  margin 0
+
+  .g-overview-num
+    text-align right
+    white-space nowrap
+
+  .g-overview-muted
+    font-size 12px
+    color $dashboardMuted
+
+.g-overview-empty
+  padding 20px 16px
+  color $dashboardMuted

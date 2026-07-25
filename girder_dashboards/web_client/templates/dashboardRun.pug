@@ -1,0 +1,23 @@
+.g-dashboard-runner
+  .g-dashboard-topbar
+    a.g-dashboard-back(href="#dashboards", title="Back to the dashboard list")
+      i.icon-left-big
+      span.g-dashboard-back-label Dashboards
+    .g-dashboard-topbar-title
+      i.g-dashboard-topbar-icon(class=dashboard.icon)
+      span= dashboard.name
+    .g-dashboard-topbar-actions
+      if canConfigure
+        a.g-dashboard-configure(href="#", title="Dashboard settings")
+          i.icon-cog
+      a.g-dashboard-home(href="#", title="Girder home")
+        i.icon-home
+  .g-dashboard-viewport
+    if error
+      .g-dashboard-error
+        i.icon-attention
+        h4= error.title
+        p= error.message
+        a.btn.btn-sm.btn-default(href="#dashboards") Back to dashboards
+    else
+      .g-dashboard-mount

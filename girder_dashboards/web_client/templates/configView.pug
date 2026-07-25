@@ -1,0 +1,54 @@
+.g-config-breadcrumb-container
+p.g-dashboards-config-lead
+  | Enable the dashboards you want to offer. Use the gear to adjust what a card
+  | shows and the padlock to control who may open it — a dashboard is only listed
+  | for users with read access to it.
+
+if !dashboards.length
+  .g-dashboards-empty
+    i.icon-info-circled
+    |  No dashboards are installed. A dashboard becomes available once a plugin
+    |  registers one.
+else
+  table.table.table-hover.g-dashboards-config-table
+    thead
+      tr
+        th.g-dashboards-col-enabled Enabled
+        th.g-dashboards-col-media
+        th Dashboard
+        th.g-dashboards-col-key Key
+        th.g-dashboards-col-actions
+    tbody
+      each dashboard in dashboards
+        tr(data-id=dashboard.id, class=dashboard.available ? '' : 'g-dashboard-row-unavailable')
+          td.g-dashboards-col-enabled
+            input.g-dashboard-enabled-toggle(
+              type="checkbox",
+              checked=dashboard.enabled,
+              disabled=!dashboard.available,
+              title=dashboard.available ? 'Offer this dashboard to users' : 'The implementation of this dashboard is not installed')
+          td.g-dashboards-col-media
+            if dashboard.image
+              img.g-dashboard-config-thumb(src=dashboard.image, alt="")
+            else
+              i.g-dashboard-config-glyph(class=dashboard.icon)
+          td
+            .g-dashboard-config-name= dashboard.name
+            if dashboard.description
+              .g-dashboard-config-description= dashboard.description
+            unless dashboard.available
+              .g-dashboard-config-warning
+                i.icon-attention
+                |  No installed plugin provides this dashboard any more.
+          td.g-dashboards-col-key
+            code= dashboard.key
+          td.g-dashboards-col-actions
+            a.g-dashboard-edit(href="#", title="Edit dashboard settings")
+              i.icon-cog
+            a.g-dashboard-access(href="#", title="Edit access control")
+              i.icon-lock
+            unless dashboard.available
+              a.g-dashboard-delete(href="#", title="Remove this leftover dashboard")
+                i.icon-trash
+
+p#g-dashboards-error-message.g-validation-failed-message

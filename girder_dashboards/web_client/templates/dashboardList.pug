@@ -1,0 +1,46 @@
+.g-dashboards-page
+  .g-dashboards-header
+    h1.g-dashboards-title
+      i.icon-gauge
+      |  Dashboards
+    if isAdmin
+      a.btn.btn-sm.btn-default.g-dashboards-configure-link(href="#plugins/dashboards/config")
+        i.icon-cog
+        |  Configure
+    p.g-dashboards-lead
+      | Lightweight, interactive apps operating on the data in this Girder instance.
+
+  if !dashboards.length
+    .g-dashboards-empty
+      i.icon-info-circled
+      if isAdmin
+        span  No dashboards are enabled yet.
+        a(href="#plugins/dashboards/config")  Enable one
+        span  to make it available here.
+      else
+        span  No dashboards are available to you.
+  else
+    .g-dashboard-cards
+      each dashboard in dashboards
+        .g-dashboard-card(data-id=dashboard.id)
+          a.g-dashboard-card-media(href=`#dashboard/${dashboard.id}`, class=dashboard.canRun ? '' : 'g-dashboard-card-media-inert')
+            if dashboard.image
+              img(src=dashboard.image, alt="")
+            else
+              i.g-dashboard-card-glyph(class=dashboard.icon)
+          .g-dashboard-card-body
+            h4.g-dashboard-card-title= dashboard.name
+            if dashboard.description
+              p.g-dashboard-card-description= dashboard.description
+          .g-dashboard-card-footer
+            if dashboard.canRun
+              a.g-dashboard-run(href=`#dashboard/${dashboard.id}`, title=`Open ${dashboard.name}`)
+                i.icon-play-circled
+                |  Open
+            else
+              span.g-dashboard-card-inert(title="This dashboard's implementation is not installed")
+                i.icon-attention
+                |  Unavailable
+            if dashboard.canConfigure
+              a.g-dashboard-configure(href="#", data-id=dashboard.id, title=`Settings for ${dashboard.name}`)
+                i.icon-cog

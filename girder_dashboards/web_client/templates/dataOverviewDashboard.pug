@@ -1,0 +1,31 @@
+.g-data-overview
+  .g-overview-stats
+    each stat in stats
+      .g-overview-stat
+        .g-overview-stat-icon
+          i(class=stat.icon)
+        .g-overview-stat-value= stat.value
+        .g-overview-stat-label= stat.label
+
+  .g-overview-panel
+    .g-overview-panel-header
+      h4 Largest collections
+      span.g-overview-panel-note= collectionNote
+    if !collections.length
+      .g-overview-empty No collections are visible to you.
+    else
+      table.table.table-hover.g-overview-table
+        thead
+          tr
+            th Collection
+            th.g-overview-num Size
+            th Created
+        tbody
+          each collection in collections
+            tr
+              td
+                a(href=`#collection/${collection.id}`)= collection.name
+                if collection.description
+                  .g-overview-muted= collection.description
+              td.g-overview-num= collection.size
+              td= collection.created
