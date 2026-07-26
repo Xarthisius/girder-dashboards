@@ -12,6 +12,12 @@
           label.control-label(for="g-dashboard-description") Description
           textarea#g-dashboard-description.form-control(rows="3")= dashboard.get('description')
         .form-group
+          label.control-label(for="g-dashboard-authors") Authors
+          textarea#g-dashboard-authors.form-control(rows="2", placeholder="One name per line")= authors
+          p.g-dashboard-field-help
+            | Credited on the card, in this order. One name per line; leave empty
+            | to credit nobody.
+        .form-group
           label.control-label(for="g-dashboard-image") Card image
           input#g-dashboard-image.input-sm.form-control(
             type="text",

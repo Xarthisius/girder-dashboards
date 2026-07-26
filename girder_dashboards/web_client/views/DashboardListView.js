@@ -47,6 +47,7 @@ var DashboardListView = View.extend({
                 id: dashboard.id,
                 name: dashboard.get('name'),
                 description: dashboard.get('description'),
+                authors: dashboard.get('authors') || [],
                 image: dashboard.get('image'),
                 icon: dashboard.get('icon') || 'icon-gauge',
                 canRun: dashboard.isRunnable(),

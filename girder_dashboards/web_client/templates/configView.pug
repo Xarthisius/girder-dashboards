@@ -34,6 +34,10 @@ else
               i.g-dashboard-config-glyph(class=dashboard.icon)
           td
             .g-dashboard-config-name= dashboard.name
+            if dashboard.authors.length
+              .g-dashboard-config-authors
+                i.icon-user
+                |  #{dashboard.authors.join(', ')}
             if dashboard.description
               .g-dashboard-config-description= dashboard.description
             unless dashboard.available

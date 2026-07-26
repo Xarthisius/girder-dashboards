@@ -122,6 +122,8 @@ def registerPrecipitateDashboard():
             "set the scale bar, pick regions of interest, and the numbers come "
             "back as interactive plots and tables."
         ),
+        # The authors of the research code this dashboard is a port of.
+        authors=["Hasan Al Jame", "Mohadeseh Taheri-Mousavi"],
         image=cardImage(),
         icon="icon-chart-bar",
         settings=dict(DEFAULT_SETTINGS),

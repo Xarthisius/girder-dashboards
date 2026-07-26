@@ -13,8 +13,8 @@ var DashboardModel = AccessControlledModel.extend({
     },
 
     /**
-     * Restore the name, description, image, icon and settings declared by the
-     * plugin that registered this dashboard. Triggers `g:reset` when done.
+     * Restore the name, description, authors, image, icon and settings declared
+     * by the plugin that registered this dashboard. Triggers `g:reset` when done.
      */
     resetToDefaults: function () {
         return restRequest({

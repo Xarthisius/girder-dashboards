@@ -200,6 +200,19 @@ async function publicKeys() {
             (await card.locator('.g-dashboard-card-title').innerText()).trim() === 'Data Overview');
         const desc = (await card.locator('.g-dashboard-card-description').innerText()).trim();
         check('REQ2c card shows the description', desc.startsWith('At-a-glance counts'), desc.slice(0, 40));
+        // The byline: a credit is only a credit if it is actually on screen, so
+        // check the rendered text and that it occupies a box.
+        const byline = card.locator('.g-dashboard-card-authors');
+        check('card shows the authors', (await byline.innerText()).trim() === 'JHU/NCSA Data Team',
+            (await byline.innerText()).trim());
+        const bylineBox = await byline.boundingBox();
+        check('author byline is visible on the card',
+            await byline.isVisible() && bylineBox && bylineBox.height > 8,
+            bylineBox && `${Math.round(bylineBox.width)}x${Math.round(bylineBox.height)}`);
+        const coAuthored = (await cardFor(page, 'Precipitate Analysis')
+            .locator('.g-dashboard-card-authors').innerText()).trim();
+        check('card lists several authors in order',
+            coAuthored === 'Hasan Al Jame, Mohadeseh Taheri-Mousavi', coAuthored);
         check('REQ2d card shows a run/open action',
             await card.locator('a.g-dashboard-run').count() === 1);
         check('REQ2d run action links to the dashboard',
@@ -348,6 +361,9 @@ async function publicKeys() {
             JSON.parse(settingsJson).collectionLimit === 10, settingsJson.replace(/\s+/g, ' '));
         check('dialog reflects the enabled state',
             await page.locator('#g-dashboard-enabled').isChecked());
+        check('dialog prefills the authors, one per line',
+            (await page.inputValue('#g-dashboard-authors')) === 'JHU/NCSA Data Team',
+            await page.inputValue('#g-dashboard-authors'));
         // The dialog has enough fields to outgrow a short viewport; its title and
         // Save button must stay on screen regardless.
         await page.waitForTimeout(500);
@@ -366,7 +382,28 @@ async function publicKeys() {
         check('dialog Save button stays within the viewport',
             modalFits.saveBottom <= modalFits.vh, JSON.stringify(modalFits));
         await page.screenshot({ path: `${SHOTS}/04-settings-dialog.png` });
-        await page.locator('#g-dashboard-edit-form a[data-dismiss="modal"]').click();
+
+        // An admin owns the byline too: edit it, and check the *reloaded* gallery
+        // shows the change (so this proves it persisted, not just re-rendered).
+        await page.fill('#g-dashboard-authors', '  Ada Lovelace  \n\nGrace Hopper\n');
+        await page.locator('#g-dashboard-edit-form button.g-save-dashboard').click();
+        await page.waitForSelector('#g-dashboard-edit-form', { state: 'hidden', timeout: 15000 });
+        await go(page, '#dashboards', '.g-dashboard-card');
+        const edited = (await cardFor(page, 'Data Overview')
+            .locator('.g-dashboard-card-authors').innerText()).trim();
+        check('an admin can edit the authors', edited === 'Ada Lovelace, Grace Hopper', edited);
+
+        // And "Reset to defaults" gives the declared authors back, which is also
+        // what keeps this harness repeatable.
+        await cardFor(page, 'Data Overview').locator('a.g-dashboard-configure').click();
+        await page.waitForSelector('#g-dashboard-edit-form', { timeout: 15000 });
+        await page.locator('#g-dashboard-edit-form a.g-dashboard-reset').click();
+        await page.waitForSelector('#g-dashboard-edit-form', { state: 'hidden', timeout: 15000 });
+        await go(page, '#dashboards', '.g-dashboard-card');
+        const restored = (await cardFor(page, 'Data Overview')
+            .locator('.g-dashboard-card-authors').innerText()).trim();
+        check('resetting to defaults restores the declared authors',
+            restored === 'JHU/NCSA Data Team', restored);
 
         // REQ 3: config page
         await go(page, '#plugins/dashboards/config', '.g-dashboards-config-table');
@@ -376,6 +413,10 @@ async function publicKeys() {
             `${await page.locator('.g-dashboards-config-table tbody tr').count()} rows`);
         check('REQ3 config row shows the key',
             (await row.locator('code').innerText()).trim() === 'data-overview');
+        check('config row shows the authors',
+            (await row.locator('.g-dashboard-config-authors').innerText()).trim() ===
+                'JHU/NCSA Data Team',
+            (await row.locator('.g-dashboard-config-authors').innerText()).trim());
         check('REQ3 config row has an enable toggle',
             await row.locator('input.g-dashboard-enabled-toggle').count() === 1);
         check('REQ3 toggle reflects the enabled state',

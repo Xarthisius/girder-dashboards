@@ -78,8 +78,8 @@ girder_dashboards/
     jobs.py            #   schedule on Celery, or in a Girder thread when there is no worker
   worker_plugin/       # girder_worker_plugins entry point + the two @app.task functions
   tests/               # conftest.py + test_dashboard.py, test_precipitate_analysis.py,
-                       #   test_precipitate_rest.py, test_precipitate_scale.py (120 tests)
-test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (118 checks)
+                       #   test_precipitate_rest.py, test_precipitate_scale.py (131 tests)
+test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (125 checks)
 test/fidelity/         # compare_to_original.py — the port vs the research scripts, by hand
 .github/workflows/     # build-test.yaml: `test` job (lint + pytest), `browser` job (e2e)
   web_client/
@@ -125,7 +125,16 @@ test/fidelity/         # compare_to_original.py — the port vs the research scr
 - **`public`/`publicFlags` are exposed** at READ level and the access endpoint accepts
   `publicFlags`, purely so core's `AccessWidget` works unmodified.
 - **Settings travel as a JSON-encoded form param** (`jsonParam(requireObject=True)`), which is
-  why `EditDashboardWidget.save()` uses `restRequest` rather than `model.save()`.
+  why `EditDashboardWidget.save()` uses `restRequest` rather than `model.save()`. `authors` goes
+  the same way (`requireArray=True`), for the same reason.
+- **`authors`** is a list of names credited on the card, declared by `registerDashboard()` and
+  overridable by an admin like the rest of the card metadata. `registry.normalizeAuthors()` is
+  the single definition of what a name list is — it trims and drops empties (so a blank line in
+  the admin's textarea is not an error) but raises on a bare string or a non-string entry, since
+  `"Ada Lovelace"` iterated character-by-character would credit nobody. The dialog takes **one
+  name per line**, not comma-separated: a name may contain a comma. `provision()` also
+  `$set`s the declared authors when the field is *absent*, which backfills documents written
+  before it existed; a present-but-empty list is an admin's decision and is left alone.
 
 ## The Precipitate Analysis dashboard
 
@@ -317,7 +326,7 @@ All under `/api/v1/dashboard`. Every response carries `available`.
 |---|---|---|
 | `GET /dashboard` | public | READ-visible dashboards; enabled-only. `includeDisabled`/`includeUnavailable` are site-admin only (403 otherwise) |
 | `GET /dashboard/{id}` | READ | One dashboard |
-| `PUT /dashboard/{id}` | doc ADMIN | name, description, image, icon, enabled, settings |
+| `PUT /dashboard/{id}` | doc ADMIN | name, description, authors, image, icon, enabled, settings |
 | `PUT /dashboard/{id}/reset` | doc ADMIN | Restore declared defaults; leaves `enabled` + ACL alone |
 | `DELETE /dashboard/{id}` | site admin | Only when `available` is false |
 | `GET`/`PUT /dashboard/{id}/access` | doc ADMIN | ACL |
@@ -345,7 +354,7 @@ Python (a repo-local `venv/` already exists with `girder`, `pytest-girder`, `ruf
 package installed editable):
 
 ```bash
-venv/bin/pytest girder_dashboards/tests -q     # 77 tests; needs MongoDB on :27017
+venv/bin/pytest girder_dashboards/tests -q     # 131 tests; needs MongoDB on :27017
 venv/bin/ruff check .
 venv/bin/ruff format girder_dashboards
 tox -e pytest   /   tox -e lint                # equivalents (pytest env pulls the extra)
@@ -432,7 +441,7 @@ error or failed request**, which is how both 401 defects below were caught.
 GIRDER_MONGO_URI=mongodb://localhost:27017/girder_dashboards_ci \
   venv/bin/girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
 python3 test/browser/seed.py       # admin, assetstore, both dashboards enabled, sample data
-node test/browser/verify.cjs       # 118/118 expected
+node test/browser/verify.cjs       # 125/125 expected
 ```
 
 `seed.py` is stdlib-only (no venv needed) and idempotent, so it works on a fresh *or* dirty
@@ -520,7 +529,7 @@ the stack declares them either.
 
 **Feature-complete and verified end to end, including the Precipitate Analysis dashboard.**
 
-- Server: **120** pytest tests pass, `ruff check` clean, `tox -e lint,pytest` rehearsed as CI runs
+- Server: **131** pytest tests pass, `ruff check` clean, `tox -e lint,pytest` rehearsed as CI runs
   it.
 - Fidelity: `test/fidelity/compare_to_original.py` reports **ALL MATCH** — all 76 statistics
   identical to the original research scripts (with real OpenCV as the reference decoder) on all four
@@ -536,9 +545,12 @@ the stack declares them either.
   Jobs come back with `handler: celery_handler`, the worker downloads the file through
   `GirderFileId`, writes `preview.png` and `results.json` back over HTTP, and produces numbers
   identical to the in-process path.
-- Browser: **118/118** checks in `test/browser/verify.cjs`, screenshots reviewed, run against a
-  brand-new database. The 98 that predate the scale/panel work were run twice, once with a Celery
-  worker and once without; the 20 new ones, on the in-process path only.
+- Browser: **125/125** checks in `test/browser/verify.cjs`, screenshots reviewed. The 98 that
+  predate the scale/panel work were run twice, once with a Celery worker and once without; the 20
+  scale/panel ones and the 7 authors ones, on the in-process path only.
+- Authors byline: verified on the gallery card, the config table and the settings dialog, including
+  the admin edit round trip (edit → reload → reset). Run against a database provisioned *before*
+  the field existed, so the `provision()` backfill is verified too, not just asserted.
 - Scale and panel detection: right answers on all six real micrographs available — a TESCAN MIRA3
   with its header (7.7221 nm/px, 90 px panel, drawn bar agreeing to 0.4%), the same image after
   Photoshop stripped the header (bar only, 129 px), another MIRA3 export (120 px panel, 141 px

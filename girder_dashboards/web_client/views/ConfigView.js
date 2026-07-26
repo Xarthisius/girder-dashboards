@@ -99,6 +99,7 @@ var ConfigView = View.extend({
                 key: dashboard.get('key'),
                 name: dashboard.get('name'),
                 description: dashboard.get('description'),
+                authors: dashboard.get('authors') || [],
                 image: dashboard.get('image'),
                 icon: dashboard.get('icon') || 'icon-gauge',
                 enabled: !!dashboard.get('enabled'),
