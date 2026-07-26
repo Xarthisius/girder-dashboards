@@ -30,10 +30,18 @@ var EditDashboardWidget = View.extend({
                 return;
             }
 
+            // One name per line, since a name can contain a comma and being
+            // credited under a mangled name is worse than typing a newline.
+            const authors = this.$('#g-dashboard-authors').val()
+                .split('\n')
+                .map((author) => author.trim())
+                .filter((author) => author);
+
             this.$('button.g-save-dashboard').girderEnable(false);
             this.save({
                 name: this.$('#g-dashboard-name').val().trim(),
                 description: this.$('#g-dashboard-description').val().trim(),
+                authors: JSON.stringify(authors),
                 image: this.$('#g-dashboard-image').val().trim(),
                 icon: this.$('#g-dashboard-icon').val().trim(),
                 enabled: this.$('#g-dashboard-enabled').is(':checked'),
@@ -59,6 +67,7 @@ var EditDashboardWidget = View.extend({
     render: function () {
         const modal = this.$el.html(template({
             dashboard: this.model,
+            authors: (this.model.get('authors') || []).join('\n'),
             settings: JSON.stringify(this.model.get('settings') || {}, null, 2)
         })).girderModal(this);
 

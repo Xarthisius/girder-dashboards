@@ -105,6 +105,13 @@ class Dashboard(Resource):
         )
         .param("name", "The name shown on the card.", required=False)
         .param("description", "The description shown on the card.", required=False)
+        .jsonParam(
+            "authors",
+            "JSON array of the names credited on the card. Pass an empty array "
+            "to credit nobody.",
+            requireArray=True,
+            required=False,
+        )
         .param(
             "image",
             "URL or data URI of the card image. Pass an empty string to fall "
@@ -132,12 +139,14 @@ class Dashboard(Resource):
         .errorResponse("Admin access was denied on the dashboard.", 403)
     )
     def updateDashboard(
-        self, dashboard, name, description, image, icon, enabled, settings
+        self, dashboard, name, description, authors, image, icon, enabled, settings
     ):
         if name is not None:
             dashboard["name"] = name
         if description is not None:
             dashboard["description"] = description
+        if authors is not None:
+            dashboard["authors"] = authors
         if image is not None:
             dashboard["image"] = image
         if icon is not None:

@@ -10,6 +10,7 @@ from ..registry import (
     DashboardDefinition,
     getDashboard,
     listDashboards,
+    normalizeAuthors,
     registeredKeys,
 )
 
@@ -43,6 +44,7 @@ class Dashboard(AccessControlledModel):
                 "key",
                 "name",
                 "description",
+                "authors",
                 "image",
                 "icon",
                 "enabled",
@@ -68,6 +70,12 @@ class Dashboard(AccessControlledModel):
         doc["name"] = name
 
         doc["description"] = (doc.get("description") or "").strip()
+
+        try:
+            doc["authors"] = normalizeAuthors(doc.get("authors"))
+        except ValueError as e:
+            raise ValidationException(str(e), "authors") from e
+
         doc["icon"] = (doc.get("icon") or "").strip() or "icon-gauge"
         doc["enabled"] = bool(doc.get("enabled", False))
 
@@ -115,6 +123,7 @@ class Dashboard(AccessControlledModel):
                     "key": definition.key,
                     "name": definition.name,
                     "description": definition.description,
+                    "authors": list(definition.authors),
                     "image": definition.image,
                     "icon": definition.icon,
                     "settings": dict(definition.settings),
@@ -130,6 +139,15 @@ class Dashboard(AccessControlledModel):
         )
         if result.upserted_id is not None:
             logger.info("Provisioned dashboard '%s'", definition.key)
+        else:
+            # Fields added to the model after a document was written are absent
+            # rather than edited, so seeding them is not clobbering anything. An
+            # admin who cleared the authors has a present-but-empty list and is
+            # left alone.
+            self.collection.update_one(
+                {"key": definition.key, "authors": {"$exists": False}},
+                {"$set": {"authors": list(definition.authors)}},
+            )
         return self.findOne({"key": definition.key})
 
     def provisionAll(self) -> list[dict]:
@@ -151,6 +169,7 @@ class Dashboard(AccessControlledModel):
             )
         doc["name"] = definition.name
         doc["description"] = definition.description
+        doc["authors"] = list(definition.authors)
         doc["image"] = definition.image
         doc["icon"] = definition.icon
         doc["settings"] = dict(definition.settings)

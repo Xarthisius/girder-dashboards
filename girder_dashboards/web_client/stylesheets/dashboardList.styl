@@ -81,6 +81,20 @@
     font-size 17px
     color $dashboardInk
 
+  // The byline sits between the title and the description, and is ink rather
+  // than muted: it is a credit, so it has to read as content and not as the
+  // secondary text around it.
+  .g-dashboard-card-authors
+    margin 0 0 6px
+    font-size 12px
+    font-weight 600
+    line-height 1.35
+    color $dashboardInk
+
+    i
+      color $dashboardMuted
+      font-weight normal
+
   .g-dashboard-card-description
     margin 0
     font-size 13px

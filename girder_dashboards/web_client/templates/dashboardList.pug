@@ -30,6 +30,10 @@
               i.g-dashboard-card-glyph(class=dashboard.icon)
           .g-dashboard-card-body
             h4.g-dashboard-card-title= dashboard.name
+            if dashboard.authors.length
+              p.g-dashboard-card-authors(title=`Authored by ${dashboard.authors.join(', ')}`)
+                i.icon-user
+                |  #{dashboard.authors.join(', ')}
             if dashboard.description
               p.g-dashboard-card-description= dashboard.description
           .g-dashboard-card-footer

@@ -46,6 +46,7 @@ class DashboardDefinition:
     key: str
     name: str
     description: str = ""
+    authors: list = field(default_factory=list)
     image: str | None = None
     icon: str = DEFAULT_ICON
     settings: dict = field(default_factory=dict)
@@ -56,6 +57,32 @@ class DashboardDefinition:
 
 _dashboards: dict[str, DashboardDefinition] = {}
 _listeners: list = []
+
+
+def normalizeAuthors(authors) -> list[str]:
+    """Coerce an authors value into a clean list of names.
+
+    Accepts any list/tuple of strings, trimming each and dropping the empties —
+    a blank line in the admin's textarea is not worth an error. Anything else
+    raises ``ValueError``: silently ignoring a value of the wrong type would
+    credit nobody, which is the one outcome this field must not produce.
+
+    Lives here rather than on the model so the registry and the document agree
+    on what a name list is.
+    """
+    if authors is None:
+        return []
+    if isinstance(authors, str) or not isinstance(authors, (list, tuple)):
+        raise ValueError("Authors must be a list of names.")
+
+    names = []
+    for author in authors:
+        if not isinstance(author, str):
+            raise ValueError("Every author must be a string.")
+        author = author.strip()
+        if author:
+            names.append(author)
+    return names
 
 
 def addRegistrationListener(listener) -> None:
@@ -84,6 +111,7 @@ def registerDashboard(
     key: str,
     name: str,
     description: str = "",
+    authors: list | None = None,
     image: str | None = None,
     icon: str = DEFAULT_ICON,
     settings: dict | None = None,
@@ -97,6 +125,7 @@ def registerDashboard(
         web client registers its view under.
     :param name: Human readable name shown on the dashboard card.
     :param description: Longer text shown on the dashboard card.
+    :param authors: Names to credit on the card, in the order they should read.
     :param image: URL (or data URI) of the card image. ``None`` falls back to
         rendering ``icon`` instead.
     :param icon: Fontello icon class used when there is no image.
@@ -111,6 +140,10 @@ def registerDashboard(
         raise ValueError(f"Dashboard {key!r} must have a non-empty name")
     if settings is not None and not isinstance(settings, dict):
         raise ValueError(f"Dashboard {key!r} settings must be a dict")
+    try:
+        authorNames = normalizeAuthors(authors)
+    except ValueError as e:
+        raise ValueError(f"Dashboard {key!r} authors are invalid: {e}") from e
 
     if key in _dashboards:
         logger.debug("Replacing already registered dashboard %r", key)
@@ -119,6 +152,7 @@ def registerDashboard(
         key=key,
         name=name,
         description=description or "",
+        authors=authorNames,
         image=image,
         icon=icon or DEFAULT_ICON,
         settings=dict(settings or {}),

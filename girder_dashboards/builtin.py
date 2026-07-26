@@ -56,6 +56,7 @@ def registerBuiltinDashboards():
             "At-a-glance counts of the collections, users and groups in this "
             "instance, with a breakdown of the largest collections."
         ),
+        authors=["JHU/NCSA Data Team"],
         image=_dataUri(_DATA_OVERVIEW_SVG),
         icon="icon-chart-bar",
         settings={"collectionLimit": 10},
