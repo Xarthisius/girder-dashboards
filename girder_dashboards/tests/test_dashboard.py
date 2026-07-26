@@ -7,6 +7,7 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from girder_dashboards.builtin import DATA_OVERVIEW_KEY
 from girder_dashboards.models.dashboard import Dashboard as DashboardModel
+from girder_dashboards.precipitate import KEY as PRECIPITATE_KEY
 from girder_dashboards.registry import registerDashboard, unregisterDashboard
 
 pytestmark = pytest.mark.plugin("dashboards")
@@ -27,6 +28,15 @@ def _get(server, user=None, **params):
     resp = server.request(path="/dashboard", method="GET", user=user, params=params)
     assertStatusOk(resp)
     return resp.json
+
+
+def _byKey(dashboards):
+    """Index a listing by key.
+
+    More than one dashboard ships with this plugin, so assertions about a
+    particular one must not depend on how many others exist.
+    """
+    return {dashboard["key"]: dashboard for dashboard in dashboards}
 
 
 # --- provisioning -----------------------------------------------------------
@@ -96,7 +106,8 @@ def test_include_disabled_is_admin_only(server, dataOverview, admin, user):
     )
     assertStatus(resp, 403)
 
-    assert len(_get(server, user=admin, includeDisabled=True)) == 1
+    assert DATA_OVERVIEW_KEY not in _byKey(_get(server, user=admin))
+    assert DATA_OVERVIEW_KEY in _byKey(_get(server, user=admin, includeDisabled=True))
 
 
 def test_acl_restricts_listing(server, enabledDataOverview, user, otherUser):
@@ -116,9 +127,12 @@ def test_unavailable_dashboard_is_hidden_from_users(
 
     assert _get(server, user=user) == []
 
-    dashboards = _get(server, user=admin, includeDisabled=True, includeUnavailable=True)
-    assert len(dashboards) == 1
-    assert dashboards[0]["available"] is False
+    dashboards = _byKey(
+        _get(server, user=admin, includeDisabled=True, includeUnavailable=True)
+    )
+    assert dashboards[DATA_OVERVIEW_KEY]["available"] is False
+    # Unregistering one dashboard must not make the others look uninstalled.
+    assert dashboards[PRECIPITATE_KEY]["available"] is True
 
 
 # --- updating ---------------------------------------------------------------

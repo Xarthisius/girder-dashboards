@@ -47,6 +47,9 @@ const BASE = (process.env.GIRDER_URL || 'http://127.0.0.1:8989').replace(/\/$/, 
 const ADMIN = process.env.GIRDER_ADMIN || 'admin';
 const PASSWORD = process.env.GIRDER_PASSWORD || 'adminpassword';
 const SHOTS = process.env.SHOTS || path.resolve(__dirname, 'screenshots');
+//: The synthetic micrograph seed.py writes; uploaded through the UI below.
+const FIXTURE = process.env.MICROGRAPH ||
+    path.resolve(__dirname, 'fixtures', 'micrograph.tif');
 
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -83,6 +86,24 @@ async function go(page, hash, waitFor) {
     if (waitFor) await page.waitForSelector(waitFor, { timeout: 15000 });
 }
 
+/** The gallery card for a named dashboard, whatever order the cards are in. */
+function cardFor(page, title) {
+    return page.locator('.g-dashboard-card', {
+        has: page.locator('.g-dashboard-card-title', { hasText: title })
+    });
+}
+
+/** The config-page row for a dashboard key. */
+function configRowFor(page, key) {
+    return page.locator('.g-dashboards-config-table tbody tr', {
+        has: page.locator('code', { hasText: key })
+    });
+}
+
+async function publicKeys() {
+    return (await (await fetch(`${BASE}/api/v1/dashboard`)).json()).map((d) => d.key);
+}
+
 (async () => {
     // Log in via the API and hand the token to the browser through localStorage,
     // which is exactly where girder's auth.js keeps it.
@@ -100,7 +121,20 @@ async function go(page, hash, waitFor) {
     if (!dashboards.length) {
         throw new Error('no enabled dashboard to test against — enable one first');
     }
-    const dashId = dashboards[0]._id;
+    // Look dashboards up by key rather than by position: more than one ships with
+    // the plugin, and the listing is sorted by name.
+    const byKey = Object.fromEntries(dashboards.map((d) => [d.key, d]));
+    for (const key of ['data-overview', 'precipitate-analysis']) {
+        if (!byKey[key]) {
+            throw new Error(`dashboard "${key}" is not enabled — run seed.py first`);
+        }
+    }
+    const dashId = byKey['data-overview']._id;
+    const precipId = byKey['precipitate-analysis']._id;
+
+    if (!fs.existsSync(FIXTURE)) {
+        throw new Error(`missing micrograph fixture ${FIXTURE} — run seed.py first`);
+    }
 
     // Prefer the system Chrome: the browser build cached for playwright may not
     // match the installed playwright version. Either way this is a throwaway
@@ -137,8 +171,12 @@ async function go(page, hash, waitFor) {
         check('REQ1 sidebar entry is highlighted as active',
             await page.locator('.g-global-nav-li.g-active a[g-name="Dashboards"]').count() === 1);
 
+        check('REQ2 gallery shows a card per enabled dashboard',
+            await page.locator('.g-dashboard-card').count() === dashboards.length,
+            `${await page.locator('.g-dashboard-card').count()} cards`);
+
         // REQ 2: card contents
-        const card = page.locator('.g-dashboard-card').first();
+        const card = cardFor(page, 'Data Overview');
         check('REQ2a card shows an image',
             await card.locator('.g-dashboard-card-media img').count() === 1);
         const imgOk = await card.locator('.g-dashboard-card-media img').evaluate(
@@ -233,6 +271,19 @@ async function go(page, hash, waitFor) {
         check('REQ4 going back restores the default layout',
             restored.bodyClass.includes('g-default-layout'), restored.bodyClass);
 
+        // The precipitate dashboard needs a signed-in user (its endpoints are
+        // @access.user and its runs live in the user's own folder). Anonymously it
+        // must say so, not fire requests that 401.
+        await go(page, `#dashboard/${precipId}`, '.g-precip-banner');
+        const anonBanner = await page.locator('.g-precip-banner').innerText();
+        check('precipitate dashboard asks an anonymous visitor to sign in',
+            /sign in/i.test(anonBanner), anonBanner.replace(/\s+/g, ' ').slice(0, 60));
+        check('precipitate dashboard offers a sign-in button',
+            await page.locator('button.g-precip-login').count() === 1);
+        check('precipitate dashboard makes no anonymous API calls',
+            !problems.some((p) => p.includes('401')), problems.join(' | ').slice(0, 200));
+        await page.screenshot({ path: `${SHOTS}/09-precipitate-anon.png` });
+
         check('no console/page errors in the anonymous flow',
             problems.length === 0, problems.join(' | ').slice(0, 300));
         await context.close();
@@ -264,7 +315,7 @@ async function go(page, hash, waitFor) {
             await page.locator('.g-global-nav a[g-name="Admin console"]').count() === 1);
 
         // REQ 2e: gear for admins
-        const card = page.locator('.g-dashboard-card').first();
+        const card = cardFor(page, 'Data Overview');
         check('REQ2e settings gear shown to an admin',
             await card.locator('a.g-dashboard-configure').count() === 1);
         check('REQ2e gallery offers a link to the config page',
@@ -305,9 +356,10 @@ async function go(page, hash, waitFor) {
 
         // REQ 3: config page
         await go(page, '#plugins/dashboards/config', '.g-dashboards-config-table');
-        const row = page.locator('.g-dashboards-config-table tbody tr').first();
-        check('REQ3 config page lists the dashboard',
-            await page.locator('.g-dashboards-config-table tbody tr').count() === 1);
+        const row = configRowFor(page, 'data-overview');
+        check('REQ3 config page lists every registered dashboard',
+            await page.locator('.g-dashboards-config-table tbody tr').count() === dashboards.length,
+            `${await page.locator('.g-dashboards-config-table tbody tr').count()} rows`);
         check('REQ3 config row shows the key',
             (await row.locator('code').innerText()).trim() === 'data-overview');
         check('REQ3 config row has an enable toggle',
@@ -321,13 +373,26 @@ async function go(page, hash, waitFor) {
             await page.locator('.g-config-breadcrumb-container').innerText() !== '');
         await page.screenshot({ path: `${SHOTS}/05-config-page.png`, fullPage: true });
 
-        // REQ3 behaviour: disabling really takes it out of the gallery.
+        // REQ3 behaviour: the toggles are per dashboard, and disabling one really
+        // takes that one — and only that one — out of the gallery.
         await row.locator('input.g-dashboard-enabled-toggle').uncheck();
+        await page.waitForFunction(async () => {
+            const r = await fetch('/api/v1/dashboard');
+            return !(await r.json()).some((d) => d.key === 'data-overview');
+        }, null, { timeout: 15000 });
+        const stillPublic = await publicKeys();
+        check('REQ3 disabling one removes it from the public listing',
+            !stillPublic.includes('data-overview'), stillPublic.join(','));
+        check('REQ3 disabling one leaves the others enabled',
+            stillPublic.includes('precipitate-analysis'), stillPublic.join(','));
+
+        // With everything off, the gallery has to say so rather than render blank.
+        await configRowFor(page, 'precipitate-analysis')
+            .locator('input.g-dashboard-enabled-toggle').uncheck();
         await page.waitForFunction(async () => {
             const r = await fetch('/api/v1/dashboard');
             return (await r.json()).length === 0;
         }, null, { timeout: 15000 });
-        check('REQ3 disabling removes it from the public listing', true);
 
         await go(page, '#dashboards', '.g-dashboards-empty');
         check('REQ3 gallery shows the empty state when nothing is enabled',
@@ -343,21 +408,275 @@ async function go(page, hash, waitFor) {
         check('REQ2e/3 access dialog opens', /access/i.test(aclTitle), aclTitle.trim());
         await page.screenshot({ path: `${SHOTS}/07-access-dialog.png` });
 
-        // Restore the enabled state so the environment is left as found.
-        await page.evaluate(async (id) => {
-            await fetch(`/api/v1/dashboard/${id}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Girder-Token': window.localStorage.getItem('girderToken')
-                },
-                body: 'enabled=true'
-            });
-        }, dashId);
-        const finalState = await (await fetch(`${BASE}/api/v1/dashboard`)).json();
-        check('re-enabled the dashboard for a clean finish', finalState.length === 1);
+        // Restore the enabled state so the environment is left as found, and so the
+        // precipitate flow below has a dashboard to run.
+        await page.evaluate(async (ids) => {
+            for (const id of ids) {
+                await fetch(`/api/v1/dashboard/${id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Girder-Token': window.localStorage.getItem('girderToken')
+                    },
+                    body: 'enabled=true'
+                });
+            }
+        }, [dashId, precipId]);
+        const finalState = await publicKeys();
+        check('re-enabled the dashboards for a clean finish',
+            finalState.length === dashboards.length, finalState.join(','));
 
         check('no console/page errors in the admin flow',
+            problems.length === 0, problems.join(' | ').slice(0, 300));
+        await context.close();
+    }
+
+    // ------------------------------------------------- precipitate analysis run
+    // A whole analysis driven through the UI: upload a micrograph, select two
+    // regions on it, run the job, and read the numbers back off the page.
+    {
+        const { context, page, problems } = await newPage(browser, adminToken);
+
+        await go(page, `#dashboard/${precipId}`, '.g-precip-step');
+        check('precipitate dashboard renders its steps',
+            await page.locator('.g-precip-step').count() === 5,
+            `${await page.locator('.g-precip-step').count()} steps`);
+        const computeNote = (await page.locator('.g-precip-compute-note').innerText()).trim();
+        check('dashboard says where the computation will run',
+            /Celery task|Girder process/.test(computeNote), computeNote);
+        check('no dependency warning on this instance',
+            await page.locator('.g-precip-banner-error').count() === 0,
+            await page.locator('.g-precip-banner').count()
+                ? (await page.locator('.g-precip-banner').innerText()).slice(0, 120)
+                : '');
+
+        // Step 1: upload. The run folder is created as the upload starts.
+        await page.setInputFiles('#g-files', FIXTURE);
+        await page.locator('.g-start-upload').click();
+        await page.waitForSelector('.g-precip-image', { timeout: 120000 });
+
+        const image = await page.locator('.g-precip-image').evaluate((el) => ({
+            complete: el.complete,
+            naturalWidth: el.naturalWidth,
+            naturalHeight: el.naturalHeight,
+            src: el.getAttribute('src')
+        }));
+        check('the backend rendered a browsable preview',
+            image.complete && image.naturalWidth === 512 && image.naturalHeight === 512,
+            JSON.stringify(image).slice(0, 140));
+        check('the preview is served from the run folder',
+            /\/file\/[0-9a-f]{24}\/download(\?|$)/.test(image.src),
+            image.src.replace(/token=[^&]+/, 'token=…'));
+        const stageTitle = (await page.locator('.g-precip-stage-title').innerText()).trim();
+        check('the stage names the image and its full resolution',
+            stageTitle.includes('micrograph.tif') && stageTitle.includes('512 × 512'),
+            stageTitle);
+        await page.screenshot({ path: `${SHOTS}/10-precipitate-preview.png`, fullPage: true });
+
+        // Step 4: drag two regions of interest onto the image.
+        const box = await page.locator('.g-precip-stage').boundingBox();
+        const drag = async (x1, y1, x2, y2) => {
+            await page.mouse.move(box.x + x1, box.y + y1);
+            await page.mouse.down();
+            await page.mouse.move(box.x + (x1 + x2) / 2, box.y + (y1 + y2) / 2, { steps: 5 });
+            await page.mouse.move(box.x + x2, box.y + y2, { steps: 5 });
+            await page.mouse.up();
+            await page.waitForTimeout(200);
+        };
+        await drag(10, 10, box.width * 0.45, box.height * 0.45);
+        await drag(box.width * 0.55, box.height * 0.55, box.width - 10, box.height - 10);
+
+        const regionRows = await page.locator('.g-precip-region-list li').count();
+        check('dragging on the image selects a region', regionRows === 2, `${regionRows} regions`);
+        const regionText = await page.locator('.g-precip-region-list li').first().innerText();
+        check('the region is reported in full-resolution pixels',
+            /\d+ × \d+ px at \d+, \d+/.test(regionText.replace(/\s+/g, ' ')),
+            regionText.replace(/\s+/g, ' '));
+        check('regions are drawn on the image',
+            await page.locator('.g-precip-overlay rect').count() === 2);
+
+        // Steps 2, 3 and 5: scale, spacing mode, preset.
+        await page.fill('#g-precip-scale-microns', '1');
+        await page.fill('#g-precip-scale-pixels', '129');
+        const derived = (await page.locator('#g-precip-scale-derived').innerText()).trim();
+        check('the scale is converted to µm/px and nm/px',
+            derived.includes('0.007752 µm/px') && derived.includes('7.75 nm/px'), derived);
+        await page.check('input[name="g-precip-spacing"][value="edge"]');
+        await page.selectOption('#g-precip-preset', 'fine');
+        await page.screenshot({ path: `${SHOTS}/11-precipitate-regions.png`, fullPage: true });
+
+        // Run it. Requirement 5: the wait is visible while the job runs.
+        await page.locator('#g-precip-run').click();
+        let progressText = '';
+        try {
+            await page.waitForSelector('.g-precip-job:not(.hide)', { timeout: 30000 });
+            progressText = (await page.locator('.g-precip-job-title').innerText()).trim();
+        } catch (e) { /* reported by the check below */ }
+        check('a progress panel appears while the job runs',
+            /precipitat/i.test(progressText), progressText);
+
+        await page.waitForSelector('.g-precip-results', { timeout: 300000 });
+        await page.waitForTimeout(1500);
+
+        // Requirement 6: numbers, as plots and tables.
+        const tiles = await page.locator('.g-precip-tile').evaluateAll((els) =>
+            els.map((el) => [
+                el.querySelector('.g-precip-tile-label').textContent.trim(),
+                el.querySelector('.g-precip-tile-value').textContent.trim()
+            ]));
+        check('results show four headline numbers', tiles.length === 4, JSON.stringify(tiles));
+        const particles = Number((tiles.find(([l]) => /Particles/.test(l)) || [])[1]);
+        check('particles were detected', particles > 0, String(particles));
+        check('every headline number is a real number',
+            tiles.every(([, v]) => /^[\d,.]+$/.test(v)), JSON.stringify(tiles));
+        check('the spacing tile names the mode that was chosen',
+            tiles.some(([l]) => /edge-to-edge/i.test(l)), JSON.stringify(tiles.map(([l]) => l)));
+
+        const canvases = await page.locator('.g-precip-results canvas').evaluateAll((els) =>
+            els.map((el) => ({ id: el.id, w: el.width, h: el.height })));
+        check('three plots were rendered', canvases.length === 3, JSON.stringify(canvases));
+        check('every plot has a non-zero drawing surface',
+            canvases.every((c) => c.w > 100 && c.h > 100), JSON.stringify(canvases));
+        check('the spacing map keeps the image aspect ratio',
+            Math.abs(canvases[2].w - canvases[2].h) <= 2, JSON.stringify(canvases[2]));
+        // A blank canvas passes every DOM assertion, so check that ink reached it.
+        const painted = await page.locator('#g-precip-diameter-chart').evaluate((el) => {
+            const ctx = el.getContext('2d');
+            const data = ctx.getImageData(0, 0, el.width, el.height).data;
+            let coloured = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] > 0 && !(data[i] > 250 && data[i + 1] > 250 && data[i + 2] > 250)) {
+                    coloured += 1;
+                }
+            }
+            return coloured;
+        });
+        check('the histogram actually drew something', painted > 500, `${painted} px`);
+
+        const statRows = await page.locator('.g-precip-table tbody tr').first()
+            .locator('td').evaluateAll((els) => els.map((el) => el.textContent.trim()));
+        check('the statistics table reports px and nm for d and s',
+            statRows.length === 4 && statRows.every((v) => /^[\d,.]+$/.test(v)),
+            JSON.stringify(statRows));
+        const statLabels = await page.locator('.g-precip-table tbody th').evaluateAll(
+            (els) => els.map((el) => el.textContent.trim()));
+        check('the statistics table covers the published descriptors',
+            ['Mean', 'Std dev', 'Median', 'Min', 'Max', 'SEM'].every((l) => statLabels.includes(l)),
+            JSON.stringify(statLabels));
+        const perRegion = await page.locator('.g-precip-panel', { hasText: 'Regions' })
+            .locator('tbody tr').count();
+        check('each region is reported separately', perRegion === 2, `${perRegion} rows`);
+
+        // The detection overlay and nearest-neighbour map, over the micrograph.
+        const circles = await page.locator('.g-precip-overlay circle').count();
+        check('detected precipitates are circled on the image',
+            circles === particles, `${circles} circles for ${particles} particles`);
+        await page.check('#g-precip-show-links');
+        await page.waitForTimeout(300);
+        check('nearest-neighbour links can be overlaid',
+            await page.locator('.g-precip-overlay path').count() === 2);
+        await page.uncheck('#g-precip-show-detections');
+        await page.waitForTimeout(300);
+        check('the detection overlay can be turned off',
+            await page.locator('.g-precip-overlay circle').count() === 0);
+        await page.check('#g-precip-show-detections');
+
+        // Scoping the charts and stats to one region.
+        await page.selectOption('#g-precip-scope', { index: 1 });
+        await page.waitForTimeout(1000);
+        const scopedTitle = (await page.locator('.g-precip-panel', { hasText: 'Statistics' })
+            .locator('h4').first().innerText()).trim();
+        check('the results can be scoped to a single region',
+            /Statistics: ROI 1/.test(scopedTitle), scopedTitle);
+        const scopedParticles = Number(
+            (await page.locator('.g-precip-tile').first()
+                .locator('.g-precip-tile-value').innerText()).replace(/,/g, ''));
+        check('scoping to a region reduces the particle count',
+            scopedParticles > 0 && scopedParticles < particles,
+            `${scopedParticles} of ${particles}`);
+        await page.screenshot({ path: `${SHOTS}/12-precipitate-results.png`, fullPage: true });
+
+        // Requirement: everything is stored in a folder of the user's own.
+        const resultLink = await page.locator('a.g-precip-download').first().getAttribute('href');
+        check('results.json is offered for download',
+            /\/file\/[0-9a-f]{24}\/download(\?|$)/.test(resultLink),
+            resultLink.replace(/token=[^&]+/, 'token=…'));
+        const stored = await page.evaluate(async (url) => {
+            const resp = await fetch(url);
+            const body = await resp.json();
+            return {
+                ok: resp.ok,
+                regions: body.regions.length,
+                mode: body.spacingMode,
+                total: body.pooled.nTotal,
+                keys: Object.keys(body.regions[0].particles)
+            };
+        }, resultLink);
+        check('the stored results are the numbers on screen',
+            stored.ok && stored.total === particles && stored.regions === 2 &&
+            stored.mode === 'edge-to-edge',
+            JSON.stringify(stored).slice(0, 160));
+        check('the stored results carry per-particle arrays',
+            ['x', 'y', 'diameterNm', 'spacingNm', 'nnIndex'].every((k) => stored.keys.includes(k)),
+            JSON.stringify(stored.keys));
+
+        const folder = await page.evaluate(async () => {
+            const token = window.localStorage.getItem('girderToken');
+            const me = await (await fetch('/api/v1/user/me', {
+                headers: { 'Girder-Token': token }
+            })).json();
+            const top = await (await fetch(
+                `/api/v1/folder?parentType=user&parentId=${me._id}&limit=0`,
+                { headers: { 'Girder-Token': token } })).json();
+            const workspace = top.find((f) => f.name === 'Precipitate Analysis');
+            if (!workspace) return { workspace: false };
+            const runs = await (await fetch(
+                `/api/v1/folder?parentType=folder&parentId=${workspace._id}&limit=0`,
+                { headers: { 'Girder-Token': token } })).json();
+            const items = await (await fetch(
+                `/api/v1/item?folderId=${runs[0]._id}&limit=0`,
+                { headers: { 'Girder-Token': token } })).json();
+            return {
+                workspace: true,
+                public: workspace.public,
+                runs: runs.length,
+                contents: items.map((i) => i.name).sort()
+            };
+        });
+        check('a dedicated folder was created in the user space',
+            folder.workspace === true, JSON.stringify(folder).slice(0, 120));
+        check('the dedicated folder is private',
+            folder.public === false, String(folder.public));
+        check('the run folder holds the input, the preview and the results',
+            JSON.stringify(folder.contents) ===
+                JSON.stringify(['micrograph.tif', 'preview.png', 'results.json']),
+            JSON.stringify(folder.contents));
+
+        const historyRows = await page.locator('.g-precip-history-table tbody tr').count();
+        check('the run appears in the run history', historyRows >= 1, `${historyRows} rows`);
+        const historyStatus = await page.locator('.g-precip-history-table tbody tr')
+            .first().locator('.g-precip-status').innerText();
+        check('the run history reports it as complete',
+            historyStatus.trim() === 'Complete', historyStatus.trim());
+
+        // Last, because it leaves this run failed: a run that finds nothing has to
+        // say why and stay retryable. The coarse preset looks for large bright
+        // precipitates, which this fixture has none of, so it fails on purpose.
+        await page.selectOption('#g-precip-preset', 'coarse');
+        await page.locator('#g-precip-run').click();
+        await page.waitForSelector('.g-precip-job-error', { timeout: 300000 });
+        const jobError = (await page.locator('.g-precip-job-error').innerText()).trim();
+        check('a failed run explains itself',
+            /No precipitates were validated|preset/i.test(jobError), jobError.slice(0, 120));
+        check('a failed run leaves the Run button usable',
+            await page.locator('#g-precip-run').isEnabled());
+        const failedStatus = await page.locator('.g-precip-history-table tbody tr')
+            .first().locator('.g-precip-status').innerText();
+        check('the run history reports the failure',
+            failedStatus.trim() === 'Failed', failedStatus.trim());
+        await page.screenshot({ path: `${SHOTS}/13-precipitate-failure.png`, fullPage: true });
+
+        check('no console/page errors in the precipitate flow',
             problems.length === 0, problems.join(' | ').slice(0, 300));
         await context.close();
     }

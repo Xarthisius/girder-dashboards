@@ -1,0 +1,153 @@
+.g-precip
+  if banner
+    .g-precip-banner(class=`g-precip-banner-${banner.level}`)
+      i(class=banner.icon)
+      div
+        strong= banner.title
+        div= banner.message
+
+  .g-precip-layout
+    .g-precip-controls
+      .g-precip-step
+        .g-precip-step-head
+          span.g-precip-step-number 1
+          h4 Micrograph
+        .g-precip-step-body
+          if run && run.state.inputName
+            .g-precip-file
+              i.icon-doc-inv
+              span.g-precip-file-name= run.state.inputName
+              button.btn.btn-link.btn-sm.g-precip-reset(type="button") Start over
+          else
+            .g-precip-upload-mount
+            .g-precip-hint= uploadHint
+
+      .g-precip-step(class=hasPreview ? '' : 'g-precip-step-disabled')
+        .g-precip-step-head
+          span.g-precip-step-number 2
+          h4 Scale
+        .g-precip-step-body
+          .g-precip-scale
+            .form-group
+              label(for="g-precip-scale-microns") Scale bar length
+              .input-group.input-group-sm
+                input#g-precip-scale-microns.form-control(type="number" step="any" min="0" value=form.scaleBarMicrons)
+                span.input-group-addon µm
+            .g-precip-scale-equals =
+            .form-group
+              label(for="g-precip-scale-pixels") measured on the image
+              .input-group.input-group-sm
+                input#g-precip-scale-pixels.form-control(type="number" step="any" min="0" value=form.scaleBarPixels)
+                span.input-group-addon px
+          .g-precip-hint#g-precip-scale-derived= form.derived
+
+      .g-precip-step(class=hasPreview ? '' : 'g-precip-step-disabled')
+        .g-precip-step-head
+          span.g-precip-step-number 3
+          h4 Spacing
+        .g-precip-step-body
+          .radio
+            label
+              input(type="radio" name="g-precip-spacing" value="centre" checked=!form.edgeToEdge)
+              |  Centre-to-centre
+              .g-precip-hint Distance between particle centroids.
+          .radio
+            label
+              input(type="radio" name="g-precip-spacing" value="edge" checked=form.edgeToEdge)
+              |  Edge-to-edge
+              .g-precip-hint Centre distance less both particles' radii, clamped at zero.
+
+      .g-precip-step(class=hasPreview ? '' : 'g-precip-step-disabled')
+        .g-precip-step-head
+          span.g-precip-step-number 4
+          h4 Regions of interest
+        .g-precip-step-body
+          if regions.length
+            ul.g-precip-region-list
+              each region in regions
+                li
+                  span.g-precip-region-swatch
+                  span.g-precip-region-label= region.label
+                  span.g-precip-region-box= region.box
+                  button.btn.btn-link.btn-xs.g-precip-region-remove(type="button" data-index=region.index title="Remove this region")
+                    i.icon-cancel
+            button.btn.btn-default.btn-xs.g-precip-region-clear(type="button") Clear all
+          else
+            .g-precip-hint Drag on the image to select a region. With none selected the whole image is analysed as one region.
+
+      .g-precip-step(class=hasPreview ? '' : 'g-precip-step-disabled')
+        .g-precip-step-head
+          span.g-precip-step-number 5
+          h4 Detection
+        .g-precip-step-body
+          .form-group
+            select#g-precip-preset.form-control.input-sm
+              each preset in presets
+                option(value=preset.key selected=preset.selected)= preset.label
+          .g-precip-hint The published tunings. Pick by how large and bright the precipitates are; the wrong one finds nothing rather than finding it badly.
+
+      .g-precip-actions
+        button#g-precip-run.btn.btn-primary(type="button" disabled=!canRun)
+          i.icon-play
+          |  Run analysis
+        span.g-precip-compute-note= computeNote
+
+    .g-precip-stagepane
+      if hasPreview
+        .g-precip-stage-head
+          .g-precip-stage-title= stageTitle
+          if hasResults
+            .g-precip-overlay-toggles
+              label
+                input#g-precip-show-detections(type="checkbox" checked=overlay.detections)
+                |  Detections
+              label
+                input#g-precip-show-links(type="checkbox" checked=overlay.links)
+                |  Nearest-neighbour links
+        .g-precip-roi-mount
+      else
+        .g-precip-placeholder
+          i.icon-picture
+          p= placeholder
+
+  .g-precip-job(class=job ? '' : 'hide')
+    .g-precip-job-head
+      span.g-precip-job-title= job ? job.title : ''
+      span.g-precip-job-status= job ? job.status : ''
+    .progress.g-precip-progress
+      .progress-bar(style=`width: ${job ? job.percent : 0}%`)
+    .g-precip-job-message= job ? job.message : ''
+    if job && job.error
+      .g-precip-job-error= job.error
+
+  .g-precip-results-mount
+
+  if runs.length
+    .g-precip-panel.g-precip-history
+      .g-precip-panel-header
+        h4 Previous runs
+        span.g-precip-panel-note= historyNote
+      .g-precip-panel-body.g-precip-panel-body-flush
+        table.table.g-precip-table.g-precip-history-table
+          thead
+            tr
+              th Run
+              th Status
+              th.g-precip-num Particles
+              th.g-precip-num d mean (nm)
+              th.g-precip-num s mean (nm)
+              th
+          tbody
+            each item in runs
+              tr(class=item.current ? 'g-precip-history-current' : '')
+                td
+                  a.g-precip-open-run(href="#" data-id=item.id)= item.name
+                  .g-precip-muted= item.detail
+                td
+                  span.g-precip-status(class=`g-precip-status-${item.statusClass}`)= item.status
+                td.g-precip-num= item.particles
+                td.g-precip-num= item.diameter
+                td.g-precip-num= item.spacing
+                td.g-precip-num
+                  button.btn.btn-link.btn-xs.g-precip-delete-run(type="button" data-id=item.id title="Delete this run")
+                    i.icon-trash

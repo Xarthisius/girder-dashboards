@@ -46,6 +46,7 @@ def _dataUri(svg: str) -> str:
 
 def registerBuiltinDashboards():
     """Register the dashboards bundled with this plugin."""
+    from .precipitate import registerPrecipitateDashboard
     from .registry import registerDashboard
 
     registerDashboard(
@@ -59,3 +60,7 @@ def registerBuiltinDashboards():
         icon="icon-chart-bar",
         settings={"collectionLimit": 10},
     )
+
+    # Declared in its own package, which owns the whole vertical slice: the
+    # algorithm, the Celery task, the storage layout and the REST resource.
+    registerPrecipitateDashboard()

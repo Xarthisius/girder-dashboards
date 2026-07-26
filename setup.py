@@ -26,9 +26,37 @@ setup(
     packages=find_packages(exclude=["girder_dashboards.tests"]),
     include_package_data=True,
     python_requires=">=3.10",
-    install_requires=[f"girder>={girder_version}"],
+    install_requires=[
+        f"girder>={girder_version}",
+        # The Precipitate Analysis dashboard schedules its work as a job on the
+        # Celery 'local' queue, with an in-process fallback. Both need these.
+        "girder-jobs>=5",
+        "girder-worker>=5",
+    ],
+    extras_require={
+        # The scientific stack the precipitate analysis itself needs. Kept out of
+        # install_requires so a Girder that only wants the other dashboards is not
+        # made to carry scikit-image; install it in *both* the Girder and the
+        # Celery worker environment to use that dashboard.
+        "precipitate": [
+            "numpy>=1.24",
+            "scipy>=1.10",
+            "scikit-image>=0.21",
+            "tifffile>=2023.7.10",
+            # TIFFs out of SEM software are usually LZW- or deflate-compressed,
+            # which tifffile delegates to imagecodecs.
+            "imagecodecs>=2023.3.16",
+            "pillow>=9",
+            "imageio>=2.28",
+        ],
+    },
     entry_points={
         "girder.plugin": ["dashboards = girder_dashboards:DashboardsPlugin"],
+        # Makes this package's Celery tasks discoverable by girder_worker, which
+        # builds CELERY_INCLUDE from this entry point group at worker startup.
+        "girder_worker_plugins": [
+            "dashboards = girder_dashboards.worker_plugin:DashboardsWorkerPlugin"
+        ],
     },
     zip_safe=False,
 )

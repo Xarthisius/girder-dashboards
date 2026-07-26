@@ -1,0 +1,479 @@
+@import "variables"
+
+// Chart surface and ink, matching the tokens charts.js draws with.
+$precipSurface = #ffffff
+$precipInk = #0b0b0b
+$precipSecondary = #52514e
+$precipMuted = #898781
+$precipGrid = #e1e0d9
+$precipSeries = #2a78d6
+$precipRegion = #e34948
+
+.g-precip
+  max-width 1400px
+  margin 0 auto
+
+.g-precip-loading
+  padding 40px
+  text-align center
+  color $dashboardMuted
+
+.g-precip-banner
+  display flex
+  gap 10px
+  align-items flex-start
+  margin-bottom 16px
+  padding 12px 14px
+  border 1px solid $dashboardBorder
+  border-left-width 4px
+  border-radius $dashboardRadius
+  background $dashboardSurface
+  font-size 13px
+
+  i
+    margin-top 2px
+    font-size 16px
+
+  &.g-precip-banner-error
+    border-left-color #d03b3b
+    i
+      color #d03b3b
+
+  &.g-precip-banner-warning
+    border-left-color #fab219
+    i
+      color $dashboardWarning
+
+// Controls on the left, the micrograph on the right. The image column is wider
+// because region selection is the part that needs the pixels.
+.g-precip-layout
+  display grid
+  grid-template-columns minmax(300px, 360px) minmax(0, 1fr)
+  grid-gap 18px
+  align-items start
+
+  @media (max-width: 900px)
+    grid-template-columns minmax(0, 1fr)
+
+.g-precip-controls
+  display flex
+  flex-direction column
+  gap 10px
+
+.g-precip-step
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+
+  &.g-precip-step-disabled
+    opacity 0.55
+
+.g-precip-step-head
+  display flex
+  align-items center
+  gap 8px
+  padding 10px 14px
+  border-bottom 1px solid $dashboardBorder
+
+  h4
+    margin 0
+    font-size 14px
+    color $dashboardInk
+
+.g-precip-step-number
+  display inline-flex
+  align-items center
+  justify-content center
+  width 20px
+  height 20px
+  border-radius 50%
+  background $dashboardCanvas
+  color $dashboardMuted
+  font-size 11px
+  font-weight 600
+
+.g-precip-step-body
+  padding 12px 14px
+
+  .form-group
+    margin-bottom 6px
+
+  label
+    font-size 12px
+    font-weight 600
+    color $dashboardMuted
+
+  .radio
+    margin 4px 0
+
+    label
+      font-weight 400
+      color $dashboardInk
+
+.g-precip-hint
+  margin-top 4px
+  font-size 12px
+  line-height 1.4
+  color $dashboardMuted
+
+.g-precip-scale
+  display flex
+  align-items flex-end
+  gap 8px
+
+  .form-group
+    flex 1 1 0
+    min-width 0
+
+.g-precip-scale-equals
+  padding-bottom 8px
+  color $dashboardMuted
+
+.g-precip-file
+  display flex
+  align-items center
+  gap 8px
+  font-size 13px
+
+  .g-precip-file-name
+    flex 1 1 auto
+    overflow hidden
+    text-overflow ellipsis
+    white-space nowrap
+    color $dashboardInk
+
+.g-precip-region-list
+  margin 0 0 8px
+  padding 0
+  list-style none
+  font-size 12px
+
+  li
+    display flex
+    align-items center
+    gap 6px
+    padding 3px 0
+    border-bottom 1px solid $dashboardCanvas
+
+  .g-precip-region-label
+    font-weight 600
+    color $dashboardInk
+
+  .g-precip-region-box
+    flex 1 1 auto
+    color $dashboardMuted
+    font-variant-numeric tabular-nums
+
+.g-precip-region-swatch
+  width 10px
+  height 10px
+  border 2px solid $precipRegion
+  border-radius 2px
+
+.g-precip-actions
+  display flex
+  flex-direction column
+  gap 6px
+  padding 2px
+
+.g-precip-compute-note
+  font-size 12px
+  color $dashboardMuted
+
+// -- the micrograph ---------------------------------------------------------
+
+.g-precip-stagepane
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+  overflow hidden
+
+.g-precip-stage-head
+  display flex
+  align-items center
+  justify-content space-between
+  flex-wrap wrap
+  gap 8px
+  padding 10px 14px
+  border-bottom 1px solid $dashboardBorder
+  font-size 13px
+
+  .g-precip-stage-title
+    font-weight 600
+    color $dashboardInk
+
+.g-precip-overlay-toggles
+  display flex
+  gap 12px
+  font-size 12px
+  color $precipSecondary
+
+  label
+    display flex
+    align-items center
+    gap 4px
+    margin 0
+    font-weight 400
+
+.g-precip-stage
+  position relative
+  // A dark backdrop: micrographs are dark, and it makes the selection border read.
+  background #14161a
+  line-height 0
+  cursor crosshair
+  user-select none
+
+.g-precip-image
+  display block
+  width 100%
+  height auto
+
+.g-precip-overlay
+  position absolute
+  top 0
+  left 0
+  width 100%
+  height 100%
+  pointer-events none
+
+.g-precip-placeholder
+  padding 60px 20px
+  text-align center
+  color $dashboardMuted
+
+  i
+    font-size 32px
+    opacity 0.5
+
+// -- job progress -----------------------------------------------------------
+
+.g-precip-job
+  margin-top 16px
+  padding 12px 14px
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+
+.g-precip-job-head
+  display flex
+  justify-content space-between
+  font-size 13px
+  font-weight 600
+  color $dashboardInk
+
+.g-precip-progress
+  height 8px
+  margin 8px 0 4px
+  background $dashboardCanvas
+
+  .progress-bar
+    background-color $precipSeries
+
+.g-precip-job-message
+  font-size 12px
+  color $dashboardMuted
+
+.g-precip-job-error
+  margin-top 6px
+  font-size 12px
+  color #d03b3b
+
+// -- results ----------------------------------------------------------------
+
+.g-precip-results
+  margin-top 18px
+
+.g-precip-tiles
+  display grid
+  grid-template-columns repeat(auto-fit, minmax(170px, 1fr))
+  grid-gap 12px
+  margin-bottom 14px
+
+.g-precip-tile
+  padding 14px 16px
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+
+  .g-precip-tile-value
+    display inline
+    font-size 28px
+    font-weight 600
+    line-height 1.1
+    color $precipInk
+
+  .g-precip-tile-unit
+    display inline
+    margin-left 3px
+    font-size 13px
+    color $precipMuted
+
+  .g-precip-tile-label
+    margin-top 2px
+    font-size 12px
+    letter-spacing 0.05em
+    text-transform uppercase
+    color $dashboardMuted
+
+.g-precip-panel
+  margin-bottom 14px
+  background $dashboardSurface
+  border 1px solid $dashboardBorder
+  border-radius $dashboardRadius
+  box-shadow $dashboardShadow
+  overflow hidden
+
+.g-precip-panel-header
+  display flex
+  align-items center
+  justify-content space-between
+  flex-wrap wrap
+  gap 8px
+  padding 10px 14px
+  border-bottom 1px solid $dashboardBorder
+
+  h4
+    margin 0
+    font-size 15px
+    color $dashboardInk
+
+  .g-precip-panel-note
+    font-size 12px
+    color $dashboardMuted
+
+.g-precip-panel-tools
+  display flex
+  align-items center
+  gap 6px
+
+  label
+    margin 0
+    font-size 12px
+    color $dashboardMuted
+
+  select
+    width auto
+
+.g-precip-panel-body
+  padding 14px
+
+  &.g-precip-panel-body-flush
+    padding 0
+
+.g-precip-chart-grid
+  display grid
+  grid-template-columns repeat(auto-fit, minmax(320px, 1fr))
+  grid-gap 18px
+
+.g-precip-chart-title
+  margin-bottom 2px
+  font-size 13px
+  font-weight 600
+  color $precipInk
+
+.g-precip-chart-note
+  margin-bottom 6px
+  font-size 12px
+  color $dashboardMuted
+
+.g-precip-chart-canvas
+  position relative
+  height 260px
+
+  // The spacing map's height comes from the image's aspect ratio, applied
+  // inline by ResultsView, so that the map is not a stretched micrograph.
+  &.g-precip-map-canvas
+    height auto
+    min-height 320px
+    max-height 78vh
+    // Narrower than the panel, because its width is tied to the image's aspect
+    // ratio rather than to the available space.
+    margin 0 auto
+
+.g-precip-chart-wide
+  margin-top 20px
+  padding-top 16px
+  border-top 1px solid $dashboardCanvas
+
+.g-precip-colorbar
+  display flex
+  align-items center
+  gap 2px
+  margin-top 8px
+  font-size 11px
+  color $precipMuted
+
+  .g-precip-colorbar-band
+    width 26px
+    height 10px
+    border-radius 1px
+
+  .g-precip-colorbar-label
+    font-variant-numeric tabular-nums
+
+  .g-precip-colorbar-caption
+    margin-left 6px
+
+.g-precip-table
+  margin 0
+  font-size 13px
+
+  th, td
+    border-color $precipGrid
+
+  thead th
+    font-size 11px
+    letter-spacing 0.04em
+    text-transform uppercase
+    color $dashboardMuted
+
+  tbody th
+    font-weight 600
+    color $precipSecondary
+
+  .g-precip-num
+    text-align right
+    white-space nowrap
+    font-variant-numeric tabular-nums
+
+.g-precip-muted
+  font-size 12px
+  color $dashboardMuted
+
+.g-precip-results-footer
+  display flex
+  align-items center
+  justify-content space-between
+  flex-wrap wrap
+  gap 8px
+  padding 2px 2px 8px
+
+.g-precip-download
+  margin-left 14px
+  font-size 13px
+
+.g-precip-history
+  margin-top 18px
+
+.g-precip-history-table
+  .g-precip-history-current
+    background $dashboardCanvas
+
+.g-precip-status
+  font-size 12px
+  font-weight 600
+
+  &.g-precip-status-complete
+    color #006300
+
+  &.g-precip-status-failed
+    color #d03b3b
+
+  &.g-precip-status-analyzing, &.g-precip-status-preparing
+    color $dashboardWarning
+
+  &.g-precip-status-new, &.g-precip-status-ready
+    color $dashboardMuted

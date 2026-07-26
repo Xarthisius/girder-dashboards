@@ -1,0 +1,872 @@
+/*
+ * Precipitate Analysis dashboard.
+ *
+ * Drives one analysis run from end to end: upload a micrograph, give it a scale,
+ * pick regions of interest, watch the job, read the numbers. Nothing is computed
+ * here — every number on screen comes from the results.json the backend stored in
+ * the user's own folder, and the image is the preview the backend rendered.
+ *
+ * The view re-renders on discrete events only (a run loaded, a job finished, the
+ * run list changed). Job progress patches the DOM in place instead, because a
+ * full re-render would tear down the region selector and the form while the user
+ * is looking at them.
+ */
+import ResultsView from './precipitate/ResultsView';
+import RoiSelector from './precipitate/RoiSelector';
+import template from '../templates/precipitateDashboard.pug';
+
+import '../stylesheets/precipitateDashboard.styl';
+
+const $ = girder.$;
+const View = girder.views.View;
+const { getCurrentToken, getCurrentUser } = girder.auth;
+const { getApiRoot, restRequest } = girder.rest;
+const FolderModel = girder.models.FolderModel;
+const UploadWidget = girder.views.widgets.UploadWidget;
+const eventStream = girder.utilities.eventStream;
+
+/*
+ * girder_jobs/constants.py::JobStatus. Only these three are terminal — the worker
+ * plugin adds statuses in the 820s (FETCHING_INPUT, CONVERTING_INPUT, ...) which
+ * are numerically larger but still mean "running", so this has to be a set rather
+ * than a "finished when >= 3" comparison.
+ */
+const JOB_SUCCESS = 3;
+const JOB_ERROR = 4;
+const JOB_CANCELED = 5;
+const JOB_FINISHED = [JOB_SUCCESS, JOB_ERROR, JOB_CANCELED];
+
+const JOB_LABELS = {
+    0: 'Queued',
+    1: 'Queued',
+    2: 'Running',
+    3: 'Complete',
+    4: 'Failed',
+    5: 'Canceled'
+};
+
+// Job progress is pushed over the notification socket; this poll is the fallback
+// for when that socket is not connected (or a notification is missed).
+const POLL_INTERVAL_MS = 1500;
+
+const STATUS_LABELS = {
+    new: 'No image',
+    preparing: 'Preparing',
+    ready: 'Ready to run',
+    analyzing: 'Running',
+    complete: 'Complete',
+    failed: 'Failed'
+};
+
+var PrecipitateDashboard = View.extend({
+    events: {
+        'click #g-precip-run': function () {
+            this._readForm();
+            this._analyze();
+        },
+        'click .g-precip-reset': function () {
+            this._openRun(null);
+        },
+        'click .g-precip-login': function () {
+            girder.events.trigger('g:loginUi');
+        },
+        'click .g-precip-region-clear': function () {
+            this.regions = [];
+            this._syncRegions();
+        },
+        'click .g-precip-region-remove': function (event) {
+            const index = Number($(event.currentTarget).data('index'));
+            this.regions.splice(index, 1);
+            this._syncRegions();
+        },
+        'click .g-precip-open-run': function (event) {
+            event.preventDefault();
+            this._openRun($(event.currentTarget).data('id'));
+        },
+        'click .g-precip-delete-run': function (event) {
+            this._deleteRun($(event.currentTarget).data('id'));
+        },
+        'change #g-precip-show-detections': function (event) {
+            this.overlay.detections = event.currentTarget.checked;
+            if (this.roiSelector) {
+                this.roiSelector.setOverlay(this.overlay);
+            }
+        },
+        'change #g-precip-show-links': function (event) {
+            this.overlay.links = event.currentTarget.checked;
+            if (this.roiSelector) {
+                this.roiSelector.setOverlay(this.overlay);
+            }
+        },
+        /*
+         * Keep `this.form` in step with the DOM on every keystroke, not just on
+         * blur. A re-render rebuilds the inputs from `this.form`, and one is
+         * triggered by the first region drag — whose `preventDefault()` stops the
+         * number input from ever blurring. Reading only on `change` therefore
+         * silently reverted a half-typed scale and analysed at the old value.
+         */
+        'input #g-precip-scale-microns': '_readForm',
+        'input #g-precip-scale-pixels': '_readForm',
+        'change #g-precip-scale-microns': '_readForm',
+        'change #g-precip-scale-pixels': '_readForm',
+        'change #g-precip-preset': '_readForm',
+        'change input[name="g-precip-spacing"]': '_readForm'
+    },
+
+    initialize: function (settings) {
+        this.dashboard = settings.dashboard;
+        this.settings = settings.settings || {};
+
+        this.capability = null;
+        this.runs = [];
+        this.run = null;
+        this.results = null;
+        this.job = null;
+        this.jobError = null;
+        this.regions = [];
+        this.overlay = { detections: true, links: false };
+
+        this.form = {
+            scaleBarMicrons: this.settings.defaultScaleBarMicrons || 1.0,
+            scaleBarPixels: this.settings.defaultScaleBarPixels || 129,
+            edgeToEdge: !!this.settings.defaultEdgeToEdge,
+            preset: this.settings.defaultPreset || 'fine'
+        };
+
+        this.listenTo(eventStream, 'g:event.job_status', this._onJobEvent);
+        // The card is public, so this view can be reached before signing in; a
+        // login from the runner's own navbar has to bring the dashboard to life.
+        this.listenTo(girder.events, 'g:login', function () {
+            this.capability = null;
+            this.render();
+        });
+    },
+
+    render: function () {
+        // Every endpoint here is @access.user, and a run is stored in the user's
+        // own folder, so there is nothing this dashboard can do anonymously.
+        // Saying so beats letting each request 401.
+        if (!getCurrentUser()) {
+            this._destroySubViews();
+            // The runner has no Girder header to sign in from, so the banner has
+            // to offer the login dialog itself. #g-dialog-container is outside the
+            // body container, so the dialog still works in the empty layout.
+            this.$el.html(
+                '<div class="g-precip"><div class="g-precip-banner g-precip-banner-warning">' +
+                    '<i class="icon-lock"></i><div><strong>Sign in to use this dashboard</strong>' +
+                    '<div>It stores the micrographs you upload, and the results it computes ' +
+                    'from them, in a folder of your own.</div>' +
+                    '<button class="btn btn-sm btn-primary g-precip-login" type="button">' +
+                    '<i class="icon-login"></i> Sign in</button>' +
+                    '</div></div></div>'
+            );
+            return this;
+        }
+
+        if (!this.capability) {
+            // Sub-views first: a re-login clears `capability`, and Chart.js
+            // instances left behind here would keep their canvases and resize
+            // listeners alive after the HTML under them is replaced.
+            this._destroySubViews();
+            this.$el.html(
+                '<div class="g-precip-loading"><i class="icon-spin4 animate-spin"></i> Loading…</div>'
+            );
+            this._loadCapability();
+            return this;
+        }
+
+        this._destroySubViews();
+
+        const state = this.run ? this.run.state || {} : {};
+        const image = state.image || {};
+        const hasPreview = !!state.previewFileId;
+
+        this.$el.html(
+            template({
+                banner: this._banner(),
+                run: this.run,
+                hasPreview: hasPreview,
+                hasResults: !!this.results,
+                overlay: this.overlay,
+                form: Object.assign({}, this.form, { derived: this._derivedScale() }),
+                presets: (this.capability.presets || []).map((preset) => ({
+                    key: preset.key,
+                    label: preset.label,
+                    selected: preset.key === this.form.preset
+                })),
+                regions: this.regions.map((region, index) => ({
+                    index: index,
+                    label: region.label || `ROI ${index + 1}`,
+                    box: `${region.width} × ${region.height} px at ${region.x}, ${region.y}`
+                })),
+                canRun: hasPreview && !this.job,
+                computeNote: this._computeNote(),
+                uploadHint: `A TIFF micrograph. It is stored in "${this.capability.workspace}" in your own Girder space, along with everything the analysis produces.`,
+                placeholder:
+                    'Upload a micrograph to see it here and select regions of interest on it.',
+                stageTitle: image.width
+                    ? `${state.inputName || 'Micrograph'} — ${image.width} × ${image.height} px`
+                    : state.inputName || 'Micrograph',
+                job: this._jobContext(),
+                runs: this._runContext(),
+                historyNote: `Stored in ${this.capability.workspace}`
+            })
+        );
+
+        if (!this.run || !state.inputName) {
+            this._renderUpload();
+        }
+        if (hasPreview) {
+            this._renderRoiSelector(image);
+        }
+        if (this.results) {
+            this._renderResults();
+        }
+
+        return this;
+    },
+
+    // -- data loading ----------------------------------------------------
+
+    _loadCapability: function () {
+        // Single-flight: render() runs whenever state changes, and the first few
+        // renders can easily overlap one in-flight request.
+        if (this.capabilityRequest) {
+            return;
+        }
+        this.capabilityRequest = restRequest({
+            url: 'precipitate/capability',
+            method: 'GET',
+            error: null
+        })
+            .always(() => {
+                this.capabilityRequest = null;
+            })
+            .done((capability) => {
+                this.capability = capability;
+                Object.assign(this.form, {
+                    scaleBarMicrons:
+                        capability.settings.defaultScaleBarMicrons || this.form.scaleBarMicrons,
+                    scaleBarPixels:
+                        capability.settings.defaultScaleBarPixels || this.form.scaleBarPixels,
+                    edgeToEdge: !!capability.settings.defaultEdgeToEdge,
+                    preset: capability.settings.defaultPreset || this.form.preset
+                });
+                this._loadRuns();
+            })
+            .fail((error) => {
+                this.capability = {
+                    presets: [],
+                    settings: {},
+                    dependencies: { ok: false, missing: [] },
+                    workspace: 'Precipitate Analysis',
+                    error: this._message(error, 'This dashboard is not available.')
+                };
+                this.render();
+            });
+    },
+
+    _loadRuns: function () {
+        restRequest({ url: 'precipitate/run', method: 'GET', error: null })
+            .done((runs) => {
+                this.runs = runs;
+            })
+            .always(() => this.render());
+    },
+
+    /** Show a run: its preview, the regions it was run with, and its results. */
+    _openRun: function (runId) {
+        // Opening a run takes two requests, and results.json can be large. Without
+        // a generation stamp, clicking run A then run B can leave B's preview on
+        // screen with A's numbers under it, because A's slower response lands last.
+        const generation = (this.openGeneration || 0) + 1;
+        this.openGeneration = generation;
+
+        if (!runId) {
+            this.run = null;
+            this.results = null;
+            this.jobError = null;
+            this.regions = [];
+            this.render();
+            return;
+        }
+
+        restRequest({ url: `precipitate/run/${runId}`, method: 'GET', error: null })
+            .done((run) => {
+                if (this.openGeneration !== generation) {
+                    return;
+                }
+                this.run = run;
+                this.results = null;
+
+                const state = run.state || {};
+                const request = state.request || {};
+                if (request.regions) {
+                    // A stored whole-image run has one region covering everything;
+                    // that is not a selection the user made, so it is not restored
+                    // as one.
+                    const wholeImage =
+                        request.regions.length === 1 &&
+                        request.regions[0].x === 0 &&
+                        request.regions[0].y === 0 &&
+                        state.image &&
+                        request.regions[0].width === state.image.width;
+                    this.regions = wholeImage ? [] : request.regions.slice();
+                }
+                if (request.scaleBarMicrons) {
+                    this.form.scaleBarMicrons = request.scaleBarMicrons;
+                    this.form.scaleBarPixels = request.scaleBarPixels;
+                    this.form.edgeToEdge = !!request.edgeToEdge;
+                    this.form.preset = request.preset || this.form.preset;
+                }
+
+                if (state.resultFileId) {
+                    this._loadResults(state.resultFileId, generation);
+                } else {
+                    this.render();
+                }
+            })
+            .fail((error) => this._fail(error, 'Could not open that run.'));
+    },
+
+    _loadResults: function (fileId, generation) {
+        // Fetched straight from the stored file rather than through an endpoint of
+        // our own: it is the artifact of record, and core already enforces its ACL.
+        // restRequest rather than $.ajax so the Girder-Token header is attached —
+        // a session whose token lives only in localStorage has no cookie to fall
+        // back on, and a private run folder would 401.
+        restRequest({
+            url: `file/${fileId}/download`,
+            method: 'GET',
+            dataType: 'json',
+            error: null
+        })
+            .done((results) => {
+                if (this.openGeneration === generation) {
+                    this.results = results;
+                }
+            })
+            .fail(() => {
+                if (this.openGeneration === generation) {
+                    this.results = null;
+                }
+            })
+            .always(() => {
+                if (this.openGeneration === generation) {
+                    this.render();
+                }
+            });
+    },
+
+    _deleteRun: function (runId) {
+        restRequest({
+            url: `precipitate/run/${runId}`,
+            method: 'DELETE',
+            error: null
+        })
+            .done(() => {
+                if (this.run && this.run._id === runId) {
+                    this.run = null;
+                    this.results = null;
+                    this.regions = [];
+                }
+                this._loadRuns();
+            })
+            .fail((error) => this._fail(error, 'Could not delete that run.'));
+    },
+
+    // -- upload ----------------------------------------------------------
+
+    _renderUpload: function () {
+        // noParent + overrideStart: the run folder is created between the user
+        // pressing upload and the bytes being sent, so choosing a file and then
+        // changing their mind leaves no empty folders behind.
+        this.uploadWidget = new UploadWidget({
+            el: this.$('.g-precip-upload-mount'),
+            parentView: this,
+            modal: false,
+            noParent: true,
+            multiFile: false,
+            title: false,
+            overrideStart: true
+        });
+
+        this.uploadWidget.on('g:uploadStarted', () => {
+            const file = this.uploadWidget.files[0];
+            restRequest({
+                url: 'precipitate/run',
+                method: 'POST',
+                data: { name: file ? file.name.replace(/\.[^.]+$/, '') : '' },
+                error: null
+            })
+                .done((run) => {
+                    this.run = run;
+                    this.uploadWidget.parentType = 'folder';
+                    this.uploadWidget.parent = new FolderModel({ _id: run._id });
+                    this.uploadWidget.uploadNextFile();
+                })
+                .fail((error) => {
+                    this.uploadWidget.setUploadEnabled(true);
+                    this._fail(error, 'Could not create a folder for this run.');
+                });
+        });
+
+        this.uploadWidget.on('g:uploadFinished', (info) => {
+            const file = info.files[0];
+            this._prepare(file.id);
+        });
+
+        this.uploadWidget.render();
+    },
+
+    // -- the two job steps -----------------------------------------------
+
+    _prepare: function (fileId) {
+        restRequest({
+            url: `precipitate/run/${this.run._id}/prepare`,
+            method: 'POST',
+            data: { fileId: fileId },
+            error: null
+        })
+            .done((job) => this._watch(job, 'Preparing the micrograph'))
+            .fail((error) => this._fail(error, 'Could not prepare the micrograph.'));
+    },
+
+    _analyze: function () {
+        if (!this.run) {
+            return;
+        }
+        this.results = null;
+
+        restRequest({
+            url: `precipitate/run/${this.run._id}/analyze`,
+            method: 'POST',
+            data: {
+                scaleBarMicrons: this.form.scaleBarMicrons,
+                scaleBarPixels: this.form.scaleBarPixels,
+                edgeToEdge: this.form.edgeToEdge,
+                preset: this.form.preset,
+                regions: JSON.stringify(this.regions)
+            },
+            error: null
+        })
+            .done((job) => this._watch(job, 'Detecting precipitates'))
+            .fail((error) => this._fail(error, 'Could not start the analysis.'));
+    },
+
+    _watch: function (job, title) {
+        this.jobError = null;
+        this.job = {
+            id: job._id,
+            title: title,
+            status: job.status,
+            percent: 0,
+            message: 'Starting…'
+        };
+        this.render();
+        this._poll();
+    },
+
+    _poll: function () {
+        if (this.pollTimer) {
+            window.clearTimeout(this.pollTimer);
+        }
+        if (!this.job) {
+            return;
+        }
+        this.pollTimer = window.setTimeout(() => {
+            if (!this.job) {
+                return;
+            }
+            restRequest({
+                url: `job/${this.job.id}`,
+                method: 'GET',
+                error: null
+            })
+                .done((job) => this._applyJob(job))
+                .always(() => this._poll());
+        }, POLL_INTERVAL_MS);
+    },
+
+    _onJobEvent: function (event) {
+        const info = event.data;
+        if (this.job && info && info._id === this.job.id) {
+            this._applyJob(info);
+        }
+    },
+
+    _applyJob: function (job) {
+        if (!this.job || job._id !== this.job.id) {
+            return;
+        }
+
+        this.job.status = job.status;
+        if (job.progress) {
+            const total = job.progress.total || 100;
+            this.job.percent = Math.max(
+                0,
+                Math.min(100, Math.round((100 * (job.progress.current || 0)) / total))
+            );
+            this.job.message = job.progress.message || this.job.message;
+        }
+
+        if (JOB_FINISHED.indexOf(job.status) === -1) {
+            this._updateJobUi();
+            return;
+        }
+
+        // Terminal. Stop polling, then reload the run so the new state (and any
+        // results) come from the server rather than being inferred here.
+        if (this.pollTimer) {
+            window.clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+        }
+        const runId = this.run && this.run._id;
+        const jobId = this.job.id;
+        // A failure is remembered separately from `this.job`, which has to be
+        // cleared either way: it is what disables the Run button while work is in
+        // flight, so keeping it would leave a failed run with no way to retry.
+        this.job = null;
+        this.jobError = null;
+
+        if (job.status !== JOB_SUCCESS) {
+            this._explainFailure(jobId, job);
+        }
+        if (runId) {
+            this._openRun(runId);
+        } else {
+            this.render();
+        }
+        this._loadRuns();
+    },
+
+    /**
+     * Put the reason a job failed on screen.
+     *
+     * The `job_status` notification the event stream delivers deliberately omits
+     * the log, so the document has to be re-fetched to find out what went wrong;
+     * the payload already in hand is only a fallback for when that request fails.
+     */
+    _explainFailure: function (jobId, payload) {
+        this.jobError =
+            this._jobError(payload) ||
+            'The job failed. Check the job log in Girder for details.';
+        restRequest({ url: `job/${jobId}`, method: 'GET', error: null }).done((full) => {
+            const message = this._jobError(full);
+            if (message) {
+                this.jobError = message;
+                this.render();
+            }
+        });
+    },
+
+    /**
+     * Pull the failure out of a job log, whichever path wrote it.
+     *
+     * The two paths log differently: the in-process one appends the exception on
+     * its own line after a preamble, while girder_worker writes
+     * `ExcClass: message` followed by an indented traceback. Taking the last
+     * *unindented* line lands on the message in both cases — the last line of a
+     * traceback is always indented, and the preamble is followed by the error.
+     */
+    _jobError: function (job) {
+        const log = job.log;
+        const text = Array.isArray(log) ? log.join('') : log || '';
+        const lines = text
+            .split('\n')
+            .filter((line) => line.trim() && !/^\s/.test(line));
+        return lines.length ? lines[lines.length - 1].trim() : null;
+    },
+
+    /** In-place progress update: a full re-render here would fight the user. */
+    _updateJobUi: function () {
+        if (!this.job) {
+            return;
+        }
+        this.$('.g-precip-job').removeClass('hide');
+        this.$('.g-precip-job-title').text(this.job.title);
+        this.$('.g-precip-job-status').text(
+            JOB_LABELS[this.job.status] || `Status ${this.job.status}`
+        );
+        this.$('.g-precip-job-message').text(this.job.message);
+        this.$('.g-precip-progress .progress-bar').css('width', `${this.job.percent}%`);
+    },
+
+    // -- sub-views -------------------------------------------------------
+
+    _renderRoiSelector: function (image) {
+        const state = this.run.state || {};
+        this.roiSelector = new RoiSelector({
+            el: this.$('.g-precip-roi-mount'),
+            parentView: this,
+            previewUrl: this._fileUrl(state.previewFileId),
+            width: image.width,
+            height: image.height,
+            regions: this.regions
+        });
+        this.roiSelector.on('g:regionsChanged', (regions) => {
+            this.regions = regions;
+            this._renderRegionList();
+        });
+        this.roiSelector.render();
+        this.roiSelector.setOverlay(this.overlay);
+        if (this.results) {
+            this.roiSelector.setResults(this.results);
+        }
+
+        // Stroke widths are in image units, so they need recomputing when the
+        // display scale changes.
+        if (!this._onResize) {
+            this._onResize = () => {
+                if (this.roiSelector) {
+                    this.roiSelector.refresh();
+                }
+            };
+            $(window).on('resize.girderPrecipitate', this._onResize);
+        }
+    },
+
+    _renderResults: function () {
+        const state = this.run.state || {};
+        this.resultsView = new ResultsView({
+            el: this.$('.g-precip-results-mount'),
+            parentView: this,
+            results: this.results,
+            resultUrl: state.resultFileId ? this._fileUrl(state.resultFileId) : null,
+            folderUrl: `#folder/${this.run._id}`
+        });
+        this.resultsView.render();
+    },
+
+    _destroySubViews: function () {
+        ['uploadWidget', 'roiSelector', 'resultsView'].forEach((key) => {
+            if (this[key]) {
+                this[key].destroy();
+                this[key] = null;
+            }
+        });
+    },
+
+    // -- small helpers ---------------------------------------------------
+
+    /**
+     * Download URL for a stored file, carrying the session token.
+     *
+     * An `<img>` cannot send a Girder-Token header, and the run folder is private,
+     * so the token goes in the query string — which core's file download endpoint
+     * accepts, and which core's own EventStream does for the same reason. Relying
+     * on the session cookie instead would break any session whose token lives only
+     * in localStorage.
+     */
+    _fileUrl: function (fileId) {
+        const token = getCurrentToken();
+        const url = `${getApiRoot()}/file/${fileId}/download`;
+        return token ? `${url}?token=${encodeURIComponent(token)}` : url;
+    },
+
+    _syncRegions: function () {
+        if (this.roiSelector) {
+            this.roiSelector.setRegions(this.regions);
+        }
+        this._renderRegionList();
+    },
+
+    /**
+     * Re-render only the region list.
+     *
+     * Dragging a region must not re-render the whole view: that would replace the
+     * <img> and make the image flash on every selection.
+     */
+    _renderRegionList: function () {
+        const step = this.$('.g-precip-region-list').closest('.g-precip-step-body');
+        if (!step.length) {
+            this.render();
+            return;
+        }
+        const items = this.regions.map(
+            (region, index) =>
+                '<li><span class="g-precip-region-swatch"></span>' +
+                `<span class="g-precip-region-label">${region.label || `ROI ${index + 1}`}</span>` +
+                `<span class="g-precip-region-box">${region.width} × ${region.height} px ` +
+                `at ${region.x}, ${region.y}</span>` +
+                `<button class="btn btn-link btn-xs g-precip-region-remove" type="button" ` +
+                `data-index="${index}" title="Remove this region"><i class="icon-cancel"></i></button></li>`
+        );
+
+        if (!items.length) {
+            this.render();
+            return;
+        }
+        step.html(
+            `<ul class="g-precip-region-list">${items.join('')}</ul>` +
+                '<button class="btn btn-default btn-xs g-precip-region-clear" type="button">Clear all</button>'
+        );
+    },
+
+    _readForm: function () {
+        const microns = parseFloat(this.$('#g-precip-scale-microns').val());
+        const pixels = parseFloat(this.$('#g-precip-scale-pixels').val());
+        if (isFinite(microns) && microns > 0) {
+            this.form.scaleBarMicrons = microns;
+        }
+        if (isFinite(pixels) && pixels > 0) {
+            this.form.scaleBarPixels = pixels;
+        }
+        const preset = this.$('#g-precip-preset').val();
+        if (preset) {
+            this.form.preset = preset;
+        }
+        const spacing = this.$('input[name="g-precip-spacing"]:checked').val();
+        if (spacing) {
+            this.form.edgeToEdge = spacing === 'edge';
+        }
+        this._updateDerivedScale();
+    },
+
+    _derivedScale: function () {
+        const microns = this.form.scaleBarMicrons;
+        const pixels = this.form.scaleBarPixels;
+        if (!(microns > 0 && pixels > 0)) {
+            return 'Enter the scale bar length and how many pixels it spans.';
+        }
+        const umPerPx = microns / pixels;
+        return `${umPerPx.toFixed(6)} µm/px = ${(umPerPx * 1000).toFixed(2)} nm/px`;
+    },
+
+    _updateDerivedScale: function () {
+        const microns = parseFloat(this.$('#g-precip-scale-microns').val());
+        const pixels = parseFloat(this.$('#g-precip-scale-pixels').val());
+        const umPerPx = microns / pixels;
+        this.$('#g-precip-scale-derived').text(
+            isFinite(umPerPx) && umPerPx > 0
+                ? `${umPerPx.toFixed(6)} µm/px = ${(umPerPx * 1000).toFixed(2)} nm/px`
+                : 'Enter the scale bar length and how many pixels it spans.'
+        );
+    },
+
+    _banner: function () {
+        if (this.capability.error) {
+            return {
+                level: 'error',
+                icon: 'icon-attention',
+                title: 'Unavailable',
+                message: this.capability.error
+            };
+        }
+        const dependencies = this.capability.dependencies || {};
+        if (!dependencies.ok) {
+            return {
+                level: 'error',
+                icon: 'icon-attention',
+                title: 'Analysis dependencies are missing',
+                message:
+                    `This Girder cannot run the analysis: ${(dependencies.missing || []).join(', ')} ` +
+                    "is not installed. Install girder-dashboards' \"precipitate\" extra in both " +
+                    'the Girder and the Celery worker environment.'
+            };
+        }
+        const state = this.run ? this.run.state || {} : {};
+        if (state.status === 'failed' && state.error) {
+            return {
+                level: 'error',
+                icon: 'icon-attention',
+                title: 'The last run of this analysis failed',
+                message: state.error
+            };
+        }
+        return null;
+    },
+
+    _computeNote: function () {
+        if (!this.capability.dependencies || !this.capability.dependencies.ok) {
+            return '';
+        }
+        return this.capability.worker
+            ? 'Runs as a Celery task on the local queue.'
+            : 'No Celery worker is available, so this runs in the Girder process.';
+    },
+
+    _jobContext: function () {
+        // The panel outlives the job when the job failed, so the reason stays on
+        // screen while the Run button becomes usable again.
+        if (!this.job) {
+            return this.jobError
+                ? {
+                    title: 'The last job failed',
+                    status: JOB_LABELS[JOB_ERROR],
+                    percent: 100,
+                    message: '',
+                    error: this.jobError
+                }
+                : null;
+        }
+        return {
+            title: this.job.title,
+            status: JOB_LABELS[this.job.status] || `Status ${this.job.status}`,
+            percent: this.job.percent,
+            message: this.job.message,
+            error: null
+        };
+    },
+
+    _runContext: function () {
+        const format = (value) =>
+            value === null || value === undefined || !isFinite(value)
+                ? '—'
+                : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+        return this.runs.map((run) => {
+            const state = run.state || {};
+            const summary = state.summary || {};
+            const status = state.status || 'new';
+            return {
+                id: run._id,
+                name: run.name,
+                current: this.run && this.run._id === run._id,
+                detail: [
+                    state.inputName,
+                    summary.nRegions ? `${summary.nRegions} region(s)` : null,
+                    summary.spacingMode
+                ]
+                    .filter(Boolean)
+                    .join(' · '),
+                status: STATUS_LABELS[status] || status,
+                statusClass: status,
+                particles: format(summary.nParticles),
+                diameter: format(summary.diameterMeanNm),
+                spacing: format(summary.spacingMeanNm)
+            };
+        });
+    },
+
+    _message: function (error, fallback) {
+        return (
+            (error && error.responseJSON && error.responseJSON.message) || fallback
+        );
+    },
+
+    _fail: function (error, fallback) {
+        this.job = null;
+        this.jobError = this._message(error, fallback);
+        girder.events.trigger('g:alert', {
+            icon: 'cancel',
+            text: this._message(error, fallback),
+            type: 'danger',
+            timeout: 6000
+        });
+        this.render();
+    },
+
+    destroy: function () {
+        if (this.pollTimer) {
+            window.clearTimeout(this.pollTimer);
+        }
+        if (this._onResize) {
+            $(window).off('resize.girderPrecipitate', this._onResize);
+        }
+        this._destroySubViews();
+        View.prototype.destroy.apply(this, arguments);
+    }
+});
+
+export default PrecipitateDashboard;

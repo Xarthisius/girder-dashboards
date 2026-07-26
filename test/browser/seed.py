@@ -2,8 +2,9 @@
 """Prepare a running Girder for test/browser/verify.cjs.
 
 The browser harness asserts against real content, so it needs an admin account,
-the bundled dashboard enabled, and at least one readable collection. This script
-puts a fresh instance into that state and is safe to re-run against a dirty one.
+the bundled dashboards enabled, at least one readable collection, and a micrograph
+to upload. This script puts a fresh instance into that state and is safe to re-run
+against a dirty one.
 
     python3 test/browser/seed.py
 
@@ -18,14 +19,27 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 BASE = os.environ.get("GIRDER_URL", "http://127.0.0.1:8989").rstrip("/")
 API = f"{BASE}/api/v1"
 ADMIN = os.environ.get("GIRDER_ADMIN", "admin")
 PASSWORD = os.environ.get("GIRDER_PASSWORD", "adminpassword")
 EMAIL = os.environ.get("GIRDER_EMAIL", "admin@example.com")
 
-DASHBOARD_KEY = "data-overview"
+DASHBOARD_KEYS = ["data-overview", "precipitate-analysis"]
 COLLECTIONS = ["Alpha", "Beta", "Gamma"]
+
+#: Uploading a micrograph needs somewhere to put the bytes, and a fresh Girder has
+#: no assetstore at all. Kept under build/ so it is gitignored and easy to discard.
+ASSETSTORE_ROOT = os.environ.get(
+    "GIRDER_ASSETSTORE",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "build",
+        "assetstore",
+    ),
+)
 
 
 def request(method, path, params=None, token=None, auth=None):
@@ -81,19 +95,53 @@ def ensure_admin():
 
 def ensure_enabled(token):
     dashboards = request("GET", "dashboard", {"includeDisabled": "true"}, token=token)
-    match = next((d for d in dashboards if d["key"] == DASHBOARD_KEY), None)
-    if match is None:
-        keys = [d["key"] for d in dashboards]
-        raise SystemExit(
-            f"dashboard '{DASHBOARD_KEY}' is not registered (found: {keys}). "
-            "Is the plugin loaded?"
-        )
-    if match["enabled"]:
-        print(f"dashboard '{DASHBOARD_KEY}' already enabled")
-    else:
-        request("PUT", f"dashboard/{match['_id']}", {"enabled": "true"}, token=token)
-        print(f"enabled dashboard '{DASHBOARD_KEY}'")
-    return match["_id"]
+    byKey = {d["key"]: d for d in dashboards}
+
+    ids = {}
+    for key in DASHBOARD_KEYS:
+        match = byKey.get(key)
+        if match is None:
+            raise SystemExit(
+                f"dashboard '{key}' is not registered (found: {sorted(byKey)}). "
+                "Is the plugin loaded?"
+            )
+        if match["enabled"]:
+            print(f"dashboard '{key}' already enabled")
+        else:
+            request(
+                "PUT", f"dashboard/{match['_id']}", {"enabled": "true"}, token=token
+            )
+            print(f"enabled dashboard '{key}'")
+        ids[key] = match["_id"]
+    return ids
+
+
+def ensure_assetstore(token):
+    """Make sure uploads have somewhere to land."""
+    existing = request("GET", "assetstore", {"limit": "0"}, token=token)
+    current = next((a for a in existing if a.get("current")), None)
+    if current:
+        print(f"assetstore '{current['name']}' already current")
+        return current["_id"]
+
+    os.makedirs(ASSETSTORE_ROOT, exist_ok=True)
+    created = request(
+        "POST",
+        "assetstore",
+        {"type": "0", "name": "Test filesystem", "root": ASSETSTORE_ROOT},
+        token=token,
+    )
+    print(f"created filesystem assetstore at {ASSETSTORE_ROOT}")
+    return created["_id"]
+
+
+def ensure_micrograph():
+    """Write the synthetic TIFF the precipitate dashboard test uploads."""
+    import micrograph
+
+    path, count = micrograph.write()
+    print(f"wrote {path} ({count} synthetic precipitates)")
+    return path
 
 
 def ensure_collections(token):
@@ -115,14 +163,16 @@ def ensure_collections(token):
 def main():
     print(f"seeding {BASE}")
     token = ensure_admin()
+    ensure_assetstore(token)
     ensure_enabled(token)
     ensure_collections(token)
 
-    visible = request("GET", "dashboard")
-    if len(visible) != 1:
-        raise SystemExit(
-            f"expected exactly 1 publicly visible dashboard, got {visible}"
-        )
+    ensure_micrograph()
+
+    visible = {d["key"] for d in request("GET", "dashboard")}
+    missing = set(DASHBOARD_KEYS) - visible
+    if missing:
+        raise SystemExit(f"dashboards not publicly visible: {sorted(missing)}")
     print("ready for test/browser/verify.cjs")
 
 

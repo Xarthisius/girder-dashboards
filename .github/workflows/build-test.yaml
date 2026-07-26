@@ -53,7 +53,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .tox
-          key: ${{ matrix.python-version }}-tox-${{ hashFiles('setup.py', 'requirements-dev.txt') }}
+          key: ${{ matrix.python-version }}-tox-${{ hashFiles('setup.py', 'requirements-dev.txt', 'tox.ini') }}
       - name: Run linter
         run: tox -e lint
       - name: Run tests with coverage
@@ -85,7 +85,10 @@ jobs:
       - name: Install the plugin
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          # The precipitate extra carries the analysis stack; without it the
+          # Precipitate Analysis dashboard reports itself unavailable and the
+          # browser checks for it fail.
+          python -m pip install -e '.[precipitate]'
       - name: Build web client
         run: |
           cd girder_dashboards/web_client

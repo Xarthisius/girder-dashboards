@@ -4,6 +4,7 @@ import * as collections from './collections';
 import * as models from './models';
 import * as views from './views';
 import DataOverviewDashboard from './dashboards/DataOverviewDashboard';
+import PrecipitateDashboard from './dashboards/PrecipitateDashboard';
 import {
     getDashboard,
     listDashboards,
@@ -35,6 +36,7 @@ wrap(GlobalNavView, 'initialize', function (initialize, settings) {
 });
 
 registerDashboard('data-overview', { view: DataOverviewDashboard });
+registerDashboard('precipitate-analysis', { view: PrecipitateDashboard });
 
 registerPluginNamespace('dashboards', {
     collections,

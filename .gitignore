@@ -16,6 +16,8 @@ venv/
 node_modules/
 girder_dashboards/web_client/dist/
 test/browser/screenshots/
+test/browser/fixtures/
 
 # left behind by a local run of the browser-verification sequence
 girder.log
+worker.log
