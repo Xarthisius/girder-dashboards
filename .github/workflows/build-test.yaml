@@ -57,7 +57,13 @@ jobs:
       - name: Run linter
         run: tox -e lint
       - name: Run tests with coverage
+        env:
+          GIRDER_MAX_CURSOR_TIMEOUT_MS: 60000
         run: tox -e pytest
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   browser:
     name: Browser end-to-end
