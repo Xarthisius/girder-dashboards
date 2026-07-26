@@ -79,7 +79,7 @@ girder_dashboards/
   worker_plugin/       # girder_worker_plugins entry point + the two @app.task functions
   tests/               # conftest.py + test_dashboard.py, test_precipitate_analysis.py,
                        #   test_precipitate_rest.py, test_precipitate_scale.py (131 tests)
-test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (125 checks)
+test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (132 checks)
 test/fidelity/         # compare_to_original.py — the port vs the research scripts, by hand
 .github/workflows/     # build-test.yaml: `test` job (lint + pytest), `browser` job (e2e)
   web_client/
@@ -441,7 +441,7 @@ error or failed request**, which is how both 401 defects below were caught.
 GIRDER_MONGO_URI=mongodb://localhost:27017/girder_dashboards_ci \
   venv/bin/girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
 python3 test/browser/seed.py       # admin, assetstore, both dashboards enabled, sample data
-node test/browser/verify.cjs       # 125/125 expected
+node test/browser/verify.cjs       # 132/132 expected
 ```
 
 `seed.py` is stdlib-only (no venv needed) and idempotent, so it works on a fresh *or* dirty
@@ -545,9 +545,9 @@ the stack declares them either.
   Jobs come back with `handler: celery_handler`, the worker downloads the file through
   `GirderFileId`, writes `preview.png` and `results.json` back over HTTP, and produces numbers
   identical to the in-process path.
-- Browser: **125/125** checks in `test/browser/verify.cjs`, screenshots reviewed. The 98 that
+- Browser: **132/132** checks in `test/browser/verify.cjs`, screenshots reviewed. The 98 that
   predate the scale/panel work were run twice, once with a Celery worker and once without; the 20
-  scale/panel ones and the 7 authors ones, on the in-process path only.
+  scale/panel ones, the 7 authors ones and the 7 busy-state ones, on the in-process path only.
 - Authors byline: verified on the gallery card, the config table and the settings dialog, including
   the admin edit round trip (edit → reload → reset). Run against a database provisioned *before*
   the field existed, so the `provision()` backfill is verified too, not just asserted.
@@ -641,6 +641,29 @@ reintroduced. Each has a regression test unless noted.
    test); `presetParams` accepted `None` for parameters used in arithmetic; a 3-page TIFF stack was
    read as three colour channels; and `_localCopy` leaked its temp directory when the assetstore
    read failed.
+
+### The busy state (reported from use, not found by either pass)
+
+Both halves of one omission: **"a step is in flight" was read off `this.job`, which does not exist
+until the request that scheduled the step comes back.** Neither the tests nor the review caught it
+because on a fast local box that window is a few milliseconds; on a loaded instance it is not.
+
+1. **The upload widget came back while the micrograph was being prepared.** `_watch` re-renders, and
+   step 1 chose between the upload widget and the file card on `run.state.inputName` — which the
+   *server* sets in the prepare request, so the client's copy of the run says "no file" for the whole
+   of the prepare job. The widget was not merely misleading: choosing a file in it creates a *second*
+   run and orphans the one being prepared.
+2. **The Run button stayed live between the click and the scheduling response**, so a second click
+   started a second analysis of the same run.
+
+Both now go through `_busy()` (`job || pending`) and `_lockControls()`, which is applied at the end
+of `render()` *and* directly on the click, so the lock lands on the click rather than on the
+response. `_pend()` claims the step before the request goes out; `_watch()` hands over to the real
+job; `_fail()` releases. `_micrographContext()` is the one place that decides what step 1 shows —
+including that a *prepare* failure drops back to the upload widget (no preview, nothing to analyse)
+while an *analysis* failure keeps the file (the image was fine). Everything the lock touches
+describes what will be run: the form, the preset, the region list and `RoiSelector.setLocked()` —
+leave any of it live and the form on screen stops matching the numbers that come back.
 
 `LICENSE` is BSD-3-Clause, matching `setup.py` and the sibling plugins. Copyright is attributed to
 **data-exp-lab, 2026**, following `../girder-jsonforms/LICENSE`; change the holder if that is

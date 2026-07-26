@@ -9,7 +9,7 @@ girder_version = "5.0.13.dev27"
 
 setup(
     name="girder-dashboards",
-    version="0.1.0",
+    version="0.1.1",
     description="Girder plugin adding lightweight, interactive dashboards",
     long_description=long_description,
     long_description_content_type="text/markdown",

@@ -13,11 +13,13 @@
           span.g-precip-step-number 1
           h4 Micrograph
         .g-precip-step-body
-          if run && run.state.inputName
-            .g-precip-file
-              i.icon-doc-inv
-              span.g-precip-file-name= run.state.inputName
+          if micrograph
+            .g-precip-file(class=micrograph.busy ? 'g-precip-file-busy' : '')
+              i(class=micrograph.icon)
+              span.g-precip-file-name= micrograph.name
               button.btn.btn-link.btn-sm.g-precip-reset(type="button") Start over
+            if micrograph.note
+              .g-precip-hint.g-precip-file-note= micrograph.note + '…'
           else
             .g-precip-upload-mount
             .g-precip-hint= uploadHint
