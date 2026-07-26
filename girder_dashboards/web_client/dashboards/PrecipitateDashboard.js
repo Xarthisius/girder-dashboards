@@ -61,6 +61,11 @@ const STATUS_LABELS = {
 var PrecipitateDashboard = View.extend({
     events: {
         'click #g-precip-run': function () {
+            // The button is disabled while work is in flight, but a click can
+            // still land in the instant before that reaches the DOM.
+            if (this._busy()) {
+                return;
+            }
             this._readForm();
             this._analyze();
         },
@@ -131,6 +136,11 @@ var PrecipitateDashboard = View.extend({
         this.run = null;
         this.results = null;
         this.job = null;
+        // A step that has been asked for but has no job document yet. Scheduling
+        // is itself a round trip, and until it comes back `job` is null — which
+        // used to leave the Run button live and the upload widget offering to
+        // replace the micrograph that is being prepared.
+        this.pending = null;
         this.jobError = null;
         this.regions = [];
         this.overlay = { detections: true, links: false };
@@ -195,11 +205,13 @@ var PrecipitateDashboard = View.extend({
         const state = this.run ? this.run.state || {} : {};
         const image = state.image || {};
         const hasPreview = !!state.previewFileId;
+        const micrograph = this._micrographContext();
 
         this.$el.html(
             template({
                 banner: this._banner(),
                 run: this.run,
+                micrograph: micrograph,
                 hasPreview: hasPreview,
                 hasResults: !!this.results,
                 overlay: this.overlay,
@@ -216,7 +228,7 @@ var PrecipitateDashboard = View.extend({
                     label: region.label || `ROI ${index + 1}`,
                     box: `${region.width} × ${region.height} px at ${region.x}, ${region.y}`
                 })),
-                canRun: hasPreview && !this.job,
+                canRun: this._canRun(),
                 computeNote: this._computeNote(),
                 uploadHint: `A TIFF micrograph. It is stored in "${this.capability.workspace}" in your own Girder space, along with everything the analysis produces.`,
                 placeholder:
@@ -230,7 +242,7 @@ var PrecipitateDashboard = View.extend({
             })
         );
 
-        if (!this.run || !state.inputName) {
+        if (!micrograph) {
             this._renderUpload();
         }
         if (hasPreview) {
@@ -239,8 +251,84 @@ var PrecipitateDashboard = View.extend({
         if (this.results) {
             this._renderResults();
         }
+        this._lockControls();
 
         return this;
+    },
+
+    // -- busy state ------------------------------------------------------
+
+    /**
+     * Is a step of this run in flight?
+     *
+     * `job` alone is not enough: it only exists once the request that scheduled
+     * the step has come back, and that request is a round trip the user can
+     * click straight through.
+     */
+    _busy: function () {
+        return !!(this.job || this.pending);
+    },
+
+    _canRun: function () {
+        const state = (this.run && this.run.state) || {};
+        return !!state.previewFileId && !this._busy();
+    },
+
+    /**
+     * Apply the busy state to the controls, in place.
+     *
+     * Called from `render()` so a fresh DOM starts out right, and directly when
+     * a step is scheduled so the lock lands on the click rather than on the
+     * response. Everything it touches describes *what will be run*, so leaving
+     * any of it live during a run means the form on screen stops matching the
+     * numbers that come back.
+     */
+    _lockControls: function () {
+        const busy = this._busy();
+        // The upload widget is left out: it owns its own start button, which is
+        // disabled until a file has been chosen, and re-enabling it here would
+        // offer an upload with nothing to upload.
+        this.$('.g-precip-controls')
+            .find('input, select, button')
+            .filter((index, el) => !$(el).closest('.g-precip-upload-mount').length)
+            .girderEnable(!busy);
+        this.$('#g-precip-run').girderEnable(this._canRun());
+        // Step 1 says so itself, with the file name and a spinner.
+        this.$('.g-precip-step').slice(1).toggleClass('g-precip-step-busy', busy);
+        if (this.roiSelector) {
+            this.roiSelector.setLocked(busy);
+        }
+    },
+
+    /**
+     * Step 1's state: the file this run is working on, or nothing — in which
+     * case the caller renders the upload widget.
+     *
+     * `run.state.inputName` cannot decide this on its own. The client's copy of
+     * the run predates the prepare request that sets it, so for the whole of the
+     * prepare job it still reads "no file" — and the upload widget came back,
+     * looking ready and *being* ready: choosing a file there creates a second
+     * run and orphans the one being prepared.
+     */
+    _micrographContext: function () {
+        const state = (this.run && this.run.state) || {};
+        const step = this.job || this.pending;
+        if (step) {
+            return {
+                name: state.inputName || step.name || 'Micrograph',
+                icon: 'icon-spin4 animate-spin',
+                note: step.title,
+                busy: true
+            };
+        }
+        // A prepare that failed left no preview, so there is nothing to analyse
+        // and nothing to keep the panel for: the way forward is another file.
+        // An analysis that failed is the other case — the image is fine, only
+        // the run was not, so the file stays and only the Run button matters.
+        if (state.inputName && (state.previewFileId || state.status !== 'failed')) {
+            return { name: state.inputName, icon: 'icon-doc-inv', note: null, busy: false };
+        }
+        return null;
     },
 
     // -- data loading ----------------------------------------------------
@@ -404,6 +492,8 @@ var PrecipitateDashboard = View.extend({
             noParent: true,
             multiFile: false,
             title: false,
+            onlyFiles: true,
+            onlyFolders: false,
             overrideStart: true
         });
 
@@ -429,7 +519,7 @@ var PrecipitateDashboard = View.extend({
 
         this.uploadWidget.on('g:uploadFinished', (info) => {
             const file = info.files[0];
-            this._prepare(file.id);
+            this._prepare(file.id, file.name);
         });
 
         this.uploadWidget.render();
@@ -437,7 +527,13 @@ var PrecipitateDashboard = View.extend({
 
     // -- the two job steps -----------------------------------------------
 
-    _prepare: function (fileId) {
+    _prepare: function (fileId, name) {
+        // Claim the step before asking for it. The bytes are already in Girder,
+        // so from here to the end of the job the micrograph is settled — the
+        // upload widget must not be on screen offering to replace it.
+        this._pend('Preparing the micrograph', name);
+        this.render();
+
         restRequest({
             url: `precipitate/run/${this.run._id}/prepare`,
             method: 'POST',
@@ -453,6 +549,12 @@ var PrecipitateDashboard = View.extend({
             return;
         }
         this.results = null;
+        // Locked in place rather than by re-rendering: the render that follows
+        // the scheduling response is about to rebuild the region selector
+        // anyway, and doing it twice would flash the image for no reason.
+        this._pend('Detecting precipitates', null);
+        this._lockControls();
+        this._updateJobUi();
 
         restRequest({
             url: `precipitate/run/${this.run._id}/analyze`,
@@ -471,7 +573,20 @@ var PrecipitateDashboard = View.extend({
             .fail((error) => this._fail(error, 'Could not start the analysis.'));
     },
 
+    /** Mark a step as asked for, before there is a job document to watch. */
+    _pend: function (title, name) {
+        this.jobError = null;
+        this.pending = {
+            title: title,
+            name: name,
+            status: 0,
+            percent: 0,
+            message: 'Starting…'
+        };
+    },
+
     _watch: function (job, title) {
+        this.pending = null;
         this.jobError = null;
         this.job = {
             id: job._id,
@@ -597,16 +712,20 @@ var PrecipitateDashboard = View.extend({
 
     /** In-place progress update: a full re-render here would fight the user. */
     _updateJobUi: function () {
-        if (!this.job) {
+        const job = this.job || this.pending;
+        if (!job) {
             return;
         }
         this.$('.g-precip-job').removeClass('hide');
-        this.$('.g-precip-job-title').text(this.job.title);
+        this.$('.g-precip-job-title').text(job.title);
         this.$('.g-precip-job-status').text(
-            JOB_LABELS[this.job.status] || `Status ${this.job.status}`
+            JOB_LABELS[job.status] || `Status ${job.status}`
         );
-        this.$('.g-precip-job-message').text(this.job.message);
-        this.$('.g-precip-progress .progress-bar').css('width', `${this.job.percent}%`);
+        this.$('.g-precip-job-message').text(job.message);
+        // A previous failure's reason is not this job's; leaving it under a live
+        // progress bar reads as the run having already failed.
+        this.$('.g-precip-job-error').remove();
+        this.$('.g-precip-progress .progress-bar').css('width', `${job.percent}%`);
     },
 
     // -- sub-views -------------------------------------------------------
@@ -1012,9 +1131,10 @@ var PrecipitateDashboard = View.extend({
     },
 
     _jobContext: function () {
+        const job = this.job || this.pending;
         // The panel outlives the job when the job failed, so the reason stays on
         // screen while the Run button becomes usable again.
-        if (!this.job) {
+        if (!job) {
             return this.jobError
                 ? {
                     title: 'The last job failed',
@@ -1026,10 +1146,10 @@ var PrecipitateDashboard = View.extend({
                 : null;
         }
         return {
-            title: this.job.title,
-            status: JOB_LABELS[this.job.status] || `Status ${this.job.status}`,
-            percent: this.job.percent,
-            message: this.job.message,
+            title: job.title,
+            status: JOB_LABELS[job.status] || `Status ${job.status}`,
+            percent: job.percent,
+            message: job.message,
             error: null
         };
     },
@@ -1072,6 +1192,7 @@ var PrecipitateDashboard = View.extend({
 
     _fail: function (error, fallback) {
         this.job = null;
+        this.pending = null;
         this.jobError = this._message(error, fallback);
         girder.events.trigger('g:alert', {
             icon: 'cancel',

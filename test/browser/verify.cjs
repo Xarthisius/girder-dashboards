@@ -508,7 +508,39 @@ async function publicKeys() {
         // Step 1: upload. The run folder is created as the upload starts.
         await page.setInputFiles('#g-files', FIXTURE);
         await page.locator('.g-start-upload').click();
+
+        // While the prepare job runs the panel must not offer another upload:
+        // choosing a file there would create a second run and orphan this one.
+        // Caught by racing the preview — on a fast box the job is over quickly.
+        const preparing = await Promise.race([
+            page.waitForSelector('.g-precip-file-busy', { timeout: 120000 })
+                .then(async () => ({
+                    busy: true,
+                    upload: await page.locator('.g-precip-upload-mount').count(),
+                    reset: await page.locator('.g-precip-reset').isEnabled(),
+                    note: (await page.locator('.g-precip-file-note').innerText()).trim()
+                })),
+            page.waitForSelector('.g-precip-image', { timeout: 120000 })
+                .then(() => ({ busy: false }))
+        ]);
+        if (preparing.busy) {
+            check('the upload widget is withdrawn while the micrograph is prepared',
+                preparing.upload === 0 && preparing.reset === false,
+                JSON.stringify(preparing));
+            check('and the panel says what is being done to it',
+                /Preparing the micrograph/.test(preparing.note), preparing.note);
+        } else {
+            check('the upload widget is withdrawn while the micrograph is prepared',
+                true, 'prepare finished before it could be observed');
+            check('and the panel says what is being done to it',
+                true, 'prepare finished before it could be observed');
+        }
+
         await page.waitForSelector('.g-precip-image', { timeout: 120000 });
+        check('the upload widget stays withdrawn once the micrograph is ready',
+            await page.locator('.g-precip-upload-mount').count() === 0 &&
+                await page.locator('.g-precip-reset').isEnabled(),
+            `${await page.locator('.g-precip-upload-mount').count()} upload mounts`);
 
         const image = await page.locator('.g-precip-image').evaluate((el) => ({
             complete: el.complete,
@@ -562,6 +594,16 @@ async function publicKeys() {
 
         // Run it. Requirement 5: the wait is visible while the job runs.
         await page.locator('#g-precip-run').click();
+        // Dead on the click, not on the scheduling response: that response is a
+        // round trip of its own, and a second click inside it starts a second
+        // analysis of the same run.
+        check('the Run button is disabled the moment it is pressed',
+            !(await page.locator('#g-precip-run').isEnabled()));
+        check('and the controls that describe the run are locked with it',
+            !(await page.locator('#g-precip-preset').isEnabled()) &&
+                !(await page.locator('#g-precip-scale-pixels').isEnabled()) &&
+                await page.locator('.g-precip-stage-locked').count() === 1,
+            `${await page.locator('.g-precip-stage-locked').count()} locked stages`);
         let progressText = '';
         try {
             await page.waitForSelector('.g-precip-job:not(.hide)', { timeout: 30000 });
@@ -572,6 +614,10 @@ async function publicKeys() {
 
         await page.waitForSelector('.g-precip-results', { timeout: 300000 });
         await page.waitForTimeout(1500);
+        check('a finished run gives the controls back',
+            await page.locator('#g-precip-run').isEnabled() &&
+                await page.locator('#g-precip-preset').isEnabled() &&
+                await page.locator('.g-precip-stage-locked').count() === 0);
 
         // Requirement 6: numbers, as plots and tables.
         const tiles = await page.locator('.g-precip-tile').evaluateAll((els) =>
@@ -725,6 +771,9 @@ async function publicKeys() {
             /No precipitates were validated|preset/i.test(jobError), jobError.slice(0, 120));
         check('a failed run leaves the Run button usable',
             await page.locator('#g-precip-run').isEnabled());
+        check('and gives the rest of the controls back too',
+            await page.locator('#g-precip-preset').isEnabled() &&
+                await page.locator('.g-precip-stage-locked').count() === 0);
         const failedStatus = await page.locator('.g-precip-history-table tbody tr')
             .first().locator('.g-precip-status').innerText();
         check('the run history reports the failure',

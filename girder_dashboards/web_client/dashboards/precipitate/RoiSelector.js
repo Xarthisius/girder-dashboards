@@ -56,6 +56,7 @@ var RoiSelector = View.extend({
         this.scaleBar = settings.scaleBar || null;
         this.overlay = { detections: true, links: false };
         this.results = null;
+        this.locked = false;
     },
 
     render: function () {
@@ -67,6 +68,7 @@ var RoiSelector = View.extend({
             '</div>'
         );
         this.svg = this.$('.g-precip-overlay')[0];
+        this.$('.g-precip-stage').toggleClass('g-precip-stage-locked', this.locked);
 
         // Stroke widths are derived from the image's rendered size, which is zero
         // until it loads — so anything drawn before then (the overlays of a
@@ -99,6 +101,24 @@ var RoiSelector = View.extend({
         return this;
     },
 
+    /**
+     * Stop the image accepting new regions.
+     *
+     * Set while a job runs: the regions are part of what was submitted, so one
+     * drawn now would be shown as if it were being analysed and then silently
+     * replaced by the stored request when the run reloads.
+     */
+    setLocked: function (locked) {
+        this.locked = !!locked;
+        if (this.locked) {
+            this._releaseDrag();
+            this.pending = null;
+            this._draw();
+        }
+        this.$('.g-precip-stage').toggleClass('g-precip-stage-locked', this.locked);
+        return this;
+    },
+
     setExclusion: function (excludeBottomPx) {
         this.excludeBottomPx = excludeBottomPx || 0;
         this._draw();
@@ -123,7 +143,7 @@ var RoiSelector = View.extend({
     },
 
     _onDown: function (event) {
-        if (event.which !== 1) {
+        if (event.which !== 1 || this.locked) {
             return;
         }
         event.preventDefault();
