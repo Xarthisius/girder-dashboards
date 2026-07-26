@@ -117,6 +117,56 @@ $precipRegion = #e34948
   line-height 1.4
   color $dashboardMuted
 
+// What the backend read out of the image itself, under the field it filled in.
+// Tinted rather than bordered like a banner: it is an annotation on one control,
+// not a message about the whole dashboard.
+.g-precip-detected
+  display flex
+  gap 8px
+  align-items flex-start
+  margin-top 8px
+  padding 8px 10px
+  border-radius $dashboardRadius
+  background $dashboardCanvas
+  font-size 12px
+  line-height 1.45
+  color $dashboardInk
+
+  i
+    margin-top 1px
+    font-size 14px
+
+  &.g-precip-detected-ok i
+    color #2f7d32
+
+  &.g-precip-detected-partial i
+    color $dashboardWarning
+
+  .g-precip-scale-restore
+    display block
+    padding 2px 0 0
+    font-size 12px
+
+.g-precip-exclude
+  margin-top 10px
+  padding-top 10px
+  border-top 1px solid $dashboardCanvas
+
+.g-precip-exclude-row
+  display flex
+  align-items center
+  justify-content space-between
+  gap 8px
+
+  .g-precip-exclude-toggle
+    margin 0
+    font-weight 400
+    font-size 13px
+    color $dashboardInk
+
+  .g-precip-exclude-height
+    flex 0 0 96px
+
 .g-precip-scale
   display flex
   align-items flex-end

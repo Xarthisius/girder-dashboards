@@ -41,35 +41,66 @@ def progressCount(fraction):
 
 
 def prepare(imagePath, sink, progress=None):
-    """Decode the micrograph, store a browsable preview, record its dimensions."""
+    """Decode the micrograph, store a browsable preview, record what it says.
+
+    Also the one place the file is examined for the two things the user would
+    otherwise have to supply by hand — the pixel scale and the info panel across
+    the bottom (:py:mod:`.scale`). Both are recorded as *findings*, under
+    ``detected``, separately from the ``request`` the user eventually makes: they
+    prefill the form and explain themselves, and the user is free to overrule
+    them.
+    """
+    from .analysis import loadImage
     from .preview import renderPreview
 
     if progress:
         progress(0.1, "Decoding image")
-    png, info = renderPreview(imagePath)
+    gray = loadImage(imagePath)
+    png, info = renderPreview(imagePath, gray=gray)
 
     if progress:
-        progress(0.7, "Storing preview")
+        progress(0.6, "Looking for a scale bar and an info panel")
+    detected = _inspect(imagePath, gray)
+
+    if progress:
+        progress(0.8, "Storing preview")
     fileId = sink.writeBytes(store.PREVIEW_NAME, png, "image/png")
 
     state = {
         "status": store.STATUS_READY,
         "previewFileId": fileId,
         "image": info,
+        "detected": detected,
         "error": None,
     }
     sink.patchState(state)
     if progress:
         progress(1.0, "Preview ready")
-    return {"previewFileId": fileId, "image": info}
+    return {"previewFileId": fileId, "image": info, "detected": detected}
+
+
+def _inspect(imagePath, gray):
+    """Scale and info panel, or ``{}`` — never a failed run.
+
+    Nothing here is required to analyse anything: every value it produces is one
+    the user can type in themselves. So an unreadable vendor header or a surprise
+    in the pixel data costs them a prefilled field, not their run.
+    """
+    from .scale import inspectMicrograph
+
+    try:
+        return inspectMicrograph(imagePath, gray)
+    except Exception:
+        logger.exception("Could not inspect %s for scale and info panel", imagePath)
+        return {}
 
 
 def analyze(imagePath, sink, options, progress=None):
     """Detect precipitates, measure spacing, store ``results.json``.
 
     ``options`` is the request as the user made it: ``scaleBarMicrons``,
-    ``scaleBarPixels``, ``edgeToEdge``, ``regions``, ``preset`` and optional
-    ``overrides``.
+    ``scaleBarPixels``, ``edgeToEdge``, ``regions``, ``preset``,
+    ``excludeBottomPx`` and optional ``overrides``.
     """
     from .analysis import analyze as runAnalysis
 
@@ -81,6 +112,7 @@ def analyze(imagePath, sink, options, progress=None):
         regions=options.get("regions") or [],
         preset=options.get("preset"),
         overrides=options.get("overrides"),
+        excludeBottomPx=options.get("excludeBottomPx") or 0,
         progress=progress,
     )
 
@@ -115,6 +147,7 @@ def analyze(imagePath, sink, options, progress=None):
                 "scaleBarPixels": results["scale"]["barPixels"],
                 "edgeToEdge": results["spacingMode"] == "edge-to-edge",
                 "preset": results["params"]["preset"],
+                "excludeBottomPx": results["image"]["excludeBottomPx"],
                 "regions": [
                     dict(region["bbox"], label=region["label"])
                     for region in results["regions"]

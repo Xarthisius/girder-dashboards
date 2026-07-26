@@ -136,12 +136,24 @@ def ensure_assetstore(token):
 
 
 def ensure_micrograph():
-    """Write the synthetic TIFF the precipitate dashboard test uploads."""
+    """Write the synthetic TIFFs the precipitate dashboard test uploads.
+
+    Two of them: a bare micrograph, and the same specimen as an instrument would
+    have written it — with a scale bar and an info panel across the bottom, and a
+    TESCAN header declaring the pixel size — which is what the scale detection
+    and panel exclusion are checked against.
+    """
     import micrograph
 
-    path, count = micrograph.write()
-    print(f"wrote {path} ({count} synthetic precipitates)")
-    return path
+    written = []
+    # ...and a third: the same panel with the vendor header stripped, which is
+    # what an image editor leaves behind and is the case where the drawn bar is
+    # the only thing left to measure.
+    for panel, header in ((False, True), (True, True), (True, False)):
+        path, count = micrograph.write(panel=panel, header=header)
+        print(f"wrote {path} ({count} synthetic precipitates)")
+        written.append(path)
+    return written
 
 
 def ensure_collections(token):

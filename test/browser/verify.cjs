@@ -50,6 +50,18 @@ const SHOTS = process.env.SHOTS || path.resolve(__dirname, 'screenshots');
 //: The synthetic micrograph seed.py writes; uploaded through the UI below.
 const FIXTURE = process.env.MICROGRAPH ||
     path.resolve(__dirname, 'fixtures', 'micrograph.tif');
+//: The same specimen with an instrument info panel and a TESCAN header, for the
+//: scale detection and panel exclusion. Its right answers are known by
+//: construction: see PANEL_HEIGHT and BAR_PIXELS in micrograph.py.
+const TESCAN_FIXTURE = process.env.MICROGRAPH_TESCAN ||
+    path.resolve(__dirname, 'fixtures', 'micrograph-tescan.tif');
+//: The same again with the vendor header stripped — an image editor's leavings,
+//: and the state four of the six real sample micrographs were in. Only the drawn
+//: bar is left, which gives pixels but not the length printed beside them.
+const STRIPPED_FIXTURE = process.env.MICROGRAPH_STRIPPED ||
+    path.resolve(__dirname, 'fixtures', 'micrograph-stripped.tif');
+const PANEL_HEIGHT = 64;
+const BAR_PIXELS = 128;
 
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -132,8 +144,10 @@ async function publicKeys() {
     const dashId = byKey['data-overview']._id;
     const precipId = byKey['precipitate-analysis']._id;
 
-    if (!fs.existsSync(FIXTURE)) {
-        throw new Error(`missing micrograph fixture ${FIXTURE} — run seed.py first`);
+    for (const fixture of [FIXTURE, TESCAN_FIXTURE, STRIPPED_FIXTURE]) {
+        if (!fs.existsSync(fixture)) {
+            throw new Error(`missing micrograph fixture ${fixture} — run seed.py first`);
+        }
     }
 
     // Prefer the system Chrome: the browser build cached for playwright may not
@@ -677,6 +691,146 @@ async function publicKeys() {
         await page.screenshot({ path: `${SHOTS}/13-precipitate-failure.png`, fullPage: true });
 
         check('no console/page errors in the precipitate flow',
+            problems.length === 0, problems.join(' | ').slice(0, 300));
+        await context.close();
+    }
+
+    // ------------------------------------ scale detection and panel exclusion
+    // The same specimen, but as an instrument writes it: a scale bar and an info
+    // panel across the bottom, and a header stating the pixel size. Neither of
+    // those should have to be typed in, and the panel must not be analysed.
+    {
+        const { context, page, problems } = await newPage(browser, adminToken);
+        await go(page, `#dashboard/${precipId}`, '.g-precip-step');
+
+        await page.setInputFiles('#g-files', TESCAN_FIXTURE);
+        await page.locator('.g-start-upload').click();
+        await page.waitForSelector('.g-precip-image', { timeout: 120000 });
+
+        const preview = await page.locator('.g-precip-image').evaluate((el) => ({
+            width: el.naturalWidth, height: el.naturalHeight
+        }));
+        check('the preview keeps the info panel so the printed bar stays readable',
+            preview.width === 512 && preview.height === 512 + PANEL_HEIGHT,
+            JSON.stringify(preview));
+
+        // The scale, read out of the file rather than typed in.
+        const scale = await page.evaluate(() => ({
+            microns: document.querySelector('#g-precip-scale-microns').value,
+            pixels: document.querySelector('#g-precip-scale-pixels').value,
+            derived: document.querySelector('#g-precip-scale-derived').textContent.trim()
+        }));
+        check('the scale is filled in from the image header',
+            Number(scale.microns) === 1 && Number(scale.pixels) === BAR_PIXELS,
+            JSON.stringify(scale));
+        check('the derived pixel size follows from it',
+            scale.derived.includes('7.81 nm/px'), scale.derived);
+
+        const source = (await page.locator('.g-precip-detected-message').innerText()).trim();
+        check('the dashboard says where the scale came from',
+            /MIRA3/.test(source) && /PixelSizeX/.test(source), source.slice(0, 160));
+        check('and cross-checks it against the bar drawn on the image',
+            /spans 128 px/.test(source), source.slice(0, 160));
+        check('the measured bar is marked on the image',
+            await page.locator('.g-precip-overlay rect').count() >= 1);
+
+        // The info panel, found and excluded.
+        const exclusion = await page.evaluate(() => ({
+            checked: document.querySelector('#g-precip-exclude-panel').checked,
+            height: document.querySelector('#g-precip-exclude-px').value,
+            note: document.querySelector('.g-precip-exclude-note').textContent.trim()
+        }));
+        check('the info panel was detected and is excluded by default',
+            exclusion.checked && Number(exclusion.height) === PANEL_HEIGHT,
+            JSON.stringify(exclusion).slice(0, 140));
+        check('the note says how much of the image is being analysed',
+            /Analysing the top 512 × 512 px/.test(exclusion.note),
+            exclusion.note.slice(0, 200));
+        await page.screenshot({ path: `${SHOTS}/14-precipitate-detected.png`, fullPage: true });
+
+        // Restoring a detected value after the user has changed it.
+        await page.fill('#g-precip-scale-pixels', '200');
+        await page.waitForTimeout(200);
+        const restore = page.locator('.g-precip-scale-restore');
+        check('changing the scale offers the detected one back',
+            await restore.isVisible() &&
+                /128/.test((await restore.innerText())), (await restore.innerText()).trim());
+        await restore.click();
+        await page.waitForTimeout(200);
+        check('and restores it when asked',
+            Number(await page.locator('#g-precip-scale-pixels').inputValue()) === BAR_PIXELS,
+            await page.locator('#g-precip-scale-pixels').inputValue());
+
+        const readResults = async () => page.evaluate(async () => {
+            const url = document.querySelector('a.g-precip-download').getAttribute('href');
+            const body = await (await fetch(url)).json();
+            return {
+                total: body.pooled.nTotal,
+                contentHeight: body.image.contentHeight,
+                excluded: body.image.excludeBottomPx,
+                lowest: Math.max(...body.regions[0].particles.y)
+            };
+        });
+
+        await page.locator('#g-precip-run').click();
+        await page.waitForSelector('.g-precip-results', { timeout: 300000 });
+        await page.waitForTimeout(1000);
+        const excluded = await readResults();
+        check('the analysis stopped at the panel boundary',
+            excluded.excluded === PANEL_HEIGHT && excluded.contentHeight === 512,
+            JSON.stringify(excluded));
+        check('and nothing was detected inside the panel',
+            excluded.lowest < 512, `lowest particle at y=${excluded.lowest}`);
+
+        // The claim this whole feature rests on: left in, the panel's text is
+        // detected as precipitates and skews every number computed from them.
+        await page.uncheck('#g-precip-exclude-panel');
+        await page.waitForTimeout(200);
+        check('unticking it puts the height field away',
+            !(await page.locator('#g-precip-exclude-px').isVisible()));
+        check('and takes the shading off the image',
+            await page.locator('.g-precip-overlay text').count() === 0);
+        check('unticking it says the whole image will be analysed',
+            /whole image is being analysed/.test(
+                await page.locator('.g-precip-exclude-note').innerText()));
+        await page.locator('#g-precip-run').click();
+        await page.waitForTimeout(1500);
+        await page.waitForSelector('.g-precip-results', { timeout: 300000 });
+        await page.waitForTimeout(1000);
+        const included = await readResults();
+        check('leaving the panel in finds precipitates that are not specimen',
+            included.total > excluded.total && included.lowest > 512,
+            `${included.total} with the panel against ${excluded.total} without, ` +
+                `lowest y=${included.lowest}`);
+        await page.screenshot({ path: `${SHOTS}/15-precipitate-panel-included.png`, fullPage: true });
+
+        // The half-answer, on a file an image editor has been through: the bar is
+        // still drawn but the header is gone, so the pixel count is measurable and
+        // the length beside it — text — is not.
+        await page.locator('.g-precip-reset').click();
+        // Attached, not visible: the file input is styled out of sight, and
+        // setInputFiles drives it regardless.
+        await page.waitForSelector('#g-files', { state: 'attached', timeout: 15000 });
+        await page.setInputFiles('#g-files', STRIPPED_FIXTURE);
+        await page.locator('.g-start-upload').click();
+        await page.waitForSelector('.g-precip-image', { timeout: 120000 });
+
+        check('a stripped file still has its panel found',
+            Number(await page.locator('#g-precip-exclude-px').inputValue()) === PANEL_HEIGHT &&
+                await page.locator('#g-precip-exclude-panel').isChecked(),
+            await page.locator('#g-precip-exclude-px').inputValue());
+        check('and its drawn bar measured, in pixels',
+            Number(await page.locator('#g-precip-scale-pixels').inputValue()) === BAR_PIXELS,
+            await page.locator('#g-precip-scale-pixels').inputValue());
+        const partial = await page.locator('.g-precip-detected-partial').count();
+        const partialText = partial
+            ? (await page.locator('.g-precip-detected-message').innerText()).trim() : '';
+        check('and the dashboard asks for the length rather than inventing one',
+            partial === 1 && /printed beside it/.test(partialText),
+            partialText.slice(0, 160));
+        await page.screenshot({ path: `${SHOTS}/16-precipitate-bar-only.png`, fullPage: true });
+
+        check('no console/page errors in the detection flow',
             problems.length === 0, problems.join(' | ').slice(0, 300));
         await context.close();
     }

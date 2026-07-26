@@ -71,14 +71,15 @@ girder_dashboards/
     __init__.py        #   declaration, card SVG, dependency probe
     presets.py         #   the two published tunings + request -> params (no heavy imports)
     analysis.py        #   the algorithm: numpy/scipy/skimage in, plain dicts out
+    scale.py           #   pixel scale from the vendor header or the drawn bar; info panel
     preview.py         #   micrograph -> downscaled PNG for region selection
     store.py           #   folder layout + the two write sinks (models / girder_client)
     runner.py          #   the two steps, written once for both execution paths
     jobs.py            #   schedule on Celery, or in a Girder thread when there is no worker
   worker_plugin/       # girder_worker_plugins entry point + the two @app.task functions
   tests/               # conftest.py + test_dashboard.py, test_precipitate_analysis.py,
-                       #   test_precipitate_rest.py (77 tests)
-test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (95 checks)
+                       #   test_precipitate_rest.py, test_precipitate_scale.py (120 tests)
+test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (118 checks)
 test/fidelity/         # compare_to_original.py — the port vs the research scripts, by hand
 .github/workflows/     # build-test.yaml: `test` job (lint + pytest), `browser` job (e2e)
   web_client/
@@ -91,7 +92,8 @@ test/fidelity/         # compare_to_original.py — the port vs the research scr
       DataOverviewDashboard.js       # worked example
       PrecipitateDashboard.js        # the stepper: upload -> scale -> regions -> job -> results
       precipitate/
-        RoiSelector.js               # image + rubber-band regions + detection/NN overlays
+        RoiSelector.js               # image + rubber-band regions + detection/NN overlays,
+                                     #   the excluded info panel, the measured scale bar
         ResultsView.js               # tiles, tables, and the charts
         charts.js                    # Chart.js histograms + spacing map
         palette.js                   # validated colour/ink tokens
@@ -180,7 +182,10 @@ picks:
 Both produce an ordinary Girder job, so the web client polls exactly one thing and never learns
 which happened. `runner.py` is the shared body; only the sink differs. **Verified on both paths:**
 98/98 browser checks with a real redis + celery worker, and 98/98 with no broker at all, producing
-byte-identical numbers.
+byte-identical numbers. The scale/panel work since then added 20 checks that have been run on the
+in-process path only — it changed nothing path-specific (`prepare` also calls `scale`, which is
+pure and needs only tifffile, and `analyze` takes one more option), but the Celery path has not
+been re-driven at 118.
 
 Points that will bite if changed:
 
@@ -216,7 +221,8 @@ Everything a run consumes and produces is a Girder object under one folder in th
 ```
 
 The run folder's `meta.precipitate` is the run's state machine (`new` → `preparing` → `ready` →
-`analyzing` → `complete`/`failed`) plus the file ids, the request that produced it, and a small
+`analyzing` → `complete`/`failed`) plus the file ids, `detected` (what the file said about itself —
+see below), the `request` that produced the results, and a small
 `summary` so the run list need not download every `results.json`. There is deliberately **no new
 Mongo model**: a run is a folder, which is what the brief asked for and what gives sharing, ACLs and
 deletion for free.
@@ -227,12 +233,61 @@ what lets the browser bin histograms and colour a scatter without post-processin
 **region-local**: when pooling regions client-side it must be dropped (`ResultsView._particles`
 does), or the links would point at the wrong particles.
 
+### Reading the scale and finding the info panel
+
+`precipitate/scale.py`, run once by `prepare` on the array `loadImage` already decoded, and stored
+under `state.detected`. Everything it produces is a **finding**, never a decision: it prefills the
+form and explains itself, the user overrules it, and `runner._inspect` swallows every exception —
+nothing here is needed to analyse anything, so it must never be why a run fails.
+
+**Scale.** Two sources, and they are not equivalent:
+
+| Source | Gives | Notes |
+|---|---|---|
+| Vendor header | µm/px outright | TESCAN private tag 50431 (`PixelSizeX`), FEI/Thermo tag 34682 (`Scan.PixelWidth`) |
+| The drawn bar | pixels only | The length beside it is *text*; `complete: False` says so and the UI asks for it |
+
+`_niceBar` turns a pixel size into the bar the image is actually printed with — if the measured bar
+comes to within 3% of a 1/2/5×10ⁿ value, that value is used and the pixel count derived from the
+header's exact scale (the Apreo sample: `50 µm = 370.656 px`, not the `20 µm` the range rule alone
+would pick). So what the form says is what the user can read off the panel.
+
+The standard `XResolution`/`ResolutionUnit` pair is deliberately **not** read. On all four real
+micrographs it holds a screen or print DPI left behind by an export (96, 146, 314 dpi) — a
+confidently wrong answer is worse than no answer, which is the rule the whole module follows.
+
+**Info panel.** The header states its height where it has one (TESCAN `ImageStripSize`, FEI's
+`Image.ResolutionY` against the file's own height); otherwise it is found in the pixels, on this
+discriminator: **specimen has noise, so no single grey level owns more than a few percent of a row;
+a drawn panel is a flat fill with text on it, so its background owns most of one.** Measured, that
+gap is 0.00-0.02 against 0.47-1.00 — wide enough to sit a threshold in the middle of. Three guards
+stop it eating specimen, and each has a test and a real file behind it: a size cap (a white page
+margin on an AFM export is 41% of the image), a **sharp boundary** requirement (a panel is pasted
+on, a vignette fades in), and a bright-fraction cap on the bar search (an all-black or
+white-background panel has a brightest *value*, not brightest *marks*).
+
+**The exclusion crops before the grey conversion**, inside `loadImage(path, excludeBottomPx=)`, and
+that is the point rather than an implementation detail: on a 16-bit micrograph the panel's white
+bar and black text *are* the array's extremes, so leaving them in means the 0-255 stretch is set by
+the panel. Because the crop comes off the bottom, the origin does not move and every region
+coordinate still means the pixels it meant on the full image. Verified on the research repo's own
+sample: 712 particles with the panel in, 677 with it excluded, against 680 for the hand-cropped
+file the published analysis used — 0.02% on mean diameter.
+
+`analyze()` defaults to `excludeBottomPx=0`, so nothing about the fidelity check changes.
+
 ### Why a preview PNG
 
 Browsers cannot display the LZW-compressed, sometimes 16-bit TIFFs instrument software writes, but
 the user has to see the image to draw regions on it. So `prepare` decodes it and stores a downscaled
 grey PNG next to it. It is rendered from `analysis.loadImage`'s output rather than from the raw
 file, so the user picks regions on exactly the grey values the detector will work from.
+
+The preview covers the **whole file, info panel included**, and the panel is dimmed by the overlay
+rather than cropped out — it is where the instrument printed the scale bar, so hiding it would hide
+the one thing the user needs in order to check the scale that was filled in for them. (The scrim is
+0.45, chosen to keep white readout text at ~3.5:1 against its background; darker and the printed
+bar length stops being readable, which defeats the purpose.)
 
 Regions are stored in **full-resolution image pixels**. The overlay is an SVG whose `viewBox` is the
 full-resolution image, so marks are placed in image coordinates and the browser does the scaling;
@@ -276,8 +331,8 @@ config page has to disable the functionality, not just hide the card.
 | `GET /precipitate/capability` | dependency probe, worker availability, presets, admin form defaults |
 | `GET`/`POST /precipitate/run` | list runs; create a run folder (and the workspace on first use) |
 | `GET`/`DELETE /precipitate/run/{id}` | run state; delete the folder |
-| `POST /precipitate/run/{id}/prepare` | schedule decode + preview for an uploaded file |
-| `POST /precipitate/run/{id}/analyze` | schedule the analysis; returns the job |
+| `POST /precipitate/run/{id}/prepare` | schedule decode + preview + inspection (`state.detected`) |
+| `POST /precipitate/run/{id}/analyze` | schedule the analysis, incl. `excludeBottomPx`; returns the job |
 
 The micrograph is uploaded, and the preview and results downloaded, with **core's own** file
 endpoints — this resource never proxies bytes core already serves with the right ACL checks.
@@ -337,6 +392,17 @@ before packaging too.
 - The `micrograph` fixture loads `test/browser/micrograph.py` **by path** rather than copying it, so
   the pytest suite and the browser harness analyse the same synthetic image. That generator is
   stdlib-only (it hand-writes an uncompressed TIFF) because `seed.py` must stay dependency-free.
+- `micrograph.write(panel=True)` writes a second fixture (`micrographWithPanel`, and
+  `fixtures/micrograph-tescan.tif` for the browser): the same specimen plus an info panel with a
+  drawn scale bar, and a TESCAN header in tag 50431. `header=False` writes a third
+  (`micrograph-stripped.tif`) with the vendor tags left off — the state an image editor leaves a
+  file in, where the drawn bar is all there is to go on, and the case four of the six real samples
+  were in. Every expected number in
+  `test_precipitate_scale.py` is one the generator put there — the panel is `PANEL_HEIGHT` tall and
+  the bar is `BAR_PIXELS` post-to-post, which is 1 µm at the `PixelSizeX` the header states. The
+  panel's stand-in "text" is deliberately **precipitate-sized dots, not blocks**: with blocks the
+  shape gates rejected it all and "excluding the panel changes the numbers" quietly held for the
+  wrong reason. It now costs 31 spurious particles, as the real ones do.
 - `test_a_run_completes_end_to_end_without_a_worker` waits on a job that a *background thread* is
   running. It polls to a terminal status, which also keeps the thread from touching the database
   after the `db` fixture tears it down.
@@ -366,7 +432,7 @@ error or failed request**, which is how both 401 defects below were caught.
 GIRDER_MONGO_URI=mongodb://localhost:27017/girder_dashboards_ci \
   venv/bin/girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
 python3 test/browser/seed.py       # admin, assetstore, both dashboards enabled, sample data
-node test/browser/verify.cjs       # 98/98 expected
+node test/browser/verify.cjs       # 118/118 expected
 ```
 
 `seed.py` is stdlib-only (no venv needed) and idempotent, so it works on a fresh *or* dirty
@@ -384,7 +450,8 @@ venv/bin/celery -A girder_worker.app worker -Q local -c 2 -l INFO > worker.log 2
 ```
 
 The harness asserts on the dashboard's own "where this runs" line, so it passes either way and the
-log says which path was exercised. Both were run: 98/98 each.
+log says which path was exercised. Both were run at 98/98, before the scale/panel checks were added
+— re-running the Celery path at 118 is worth doing next time a broker is to hand.
 
 Configure both via `GIRDER_URL` / `GIRDER_ADMIN` / `GIRDER_PASSWORD`, plus `SHOTS` for
 screenshots, which land in `test/browser/screenshots/` (gitignored). **Read the screenshots** —
@@ -453,14 +520,14 @@ the stack declares them either.
 
 **Feature-complete and verified end to end, including the Precipitate Analysis dashboard.**
 
-- Server: **88** pytest tests pass, `ruff check` clean, `tox -e lint,pytest` rehearsed as CI runs
+- Server: **120** pytest tests pass, `ruff check` clean, `tox -e lint,pytest` rehearsed as CI runs
   it.
 - Fidelity: `test/fidelity/compare_to_original.py` reports **ALL MATCH** — all 76 statistics
   identical to the original research scripts (with real OpenCV as the reference decoder) on all four
   sample images, both presets, both spacing modes, down to the blob-candidate counts. Re-run after
   every change to detection or statistics; it caught nothing after the review fixes, which is the
   point.
-- Build: `npm run build` succeeds (225 kB UMD / 72 kB gzipped, up from 28 kB — that is Chart.js —
+- Build: `npm run build` succeeds (232 kB UMD / 74 kB gzipped, up from 28 kB — that is Chart.js —
   plus 14 kB CSS); the bundle still references only the `girder` global.
 - API, live against MongoDB: both dashboards provision, `system/plugin_static_files` lists both
   assets, and a full run works over HTTP — create run, upload, prepare, analyze with two ROIs,
@@ -469,8 +536,15 @@ the stack declares them either.
   Jobs come back with `handler: celery_handler`, the worker downloads the file through
   `GirderFileId`, writes `preview.png` and `results.json` back over HTTP, and produces numbers
   identical to the in-process path.
-- Browser: **98/98** checks in `test/browser/verify.cjs`, screenshots reviewed, run against a
-  brand-new database — twice, once with a Celery worker and once without.
+- Browser: **118/118** checks in `test/browser/verify.cjs`, screenshots reviewed, run against a
+  brand-new database. The 98 that predate the scale/panel work were run twice, once with a Celery
+  worker and once without; the 20 new ones, on the in-process path only.
+- Scale and panel detection: right answers on all six real micrographs available — a TESCAN MIRA3
+  with its header (7.7221 nm/px, 90 px panel, drawn bar agreeing to 0.4%), the same image after
+  Photoshop stripped the header (bar only, 129 px), another MIRA3 export (120 px panel, 141 px
+  bar), an FEI Apreo (134.896 nm/px, 70 px databar, its `|—— 50 µm ——|` measured as one bar) — and
+  nothing invented for the two negatives, an already-cropped micrograph and an AFM page export
+  whose background is white for 41% of its height.
 - Cross-path equivalence: the same run through both paths produces byte-identical summaries
   (`diameterMeanNm` 22.879844961240305, 31 particles) — which is the thing that broke silently
   before the decoder fix below.
@@ -566,4 +640,8 @@ the dev stack (see Deployment above); a release workflow if the package should g
 above); Codecov upload. For the precipitate dashboard specifically: the detection parameters are
 overridable through the REST API (`overrides`) but the UI only offers the two presets — an "advanced"
 panel would be the natural next step, as would letting a run reuse an image already in Girder instead
-of always uploading one.
+of always uploading one. On the scale side, `scale.readHeaderScale` covers the two vendors there
+were files to test against; Zeiss (`CZ_SEM`, tag 34118, which tifffile already parses into
+`sem_metadata`) is the obvious third and was left out only because adding an unverifiable branch
+would undercut the point of the module. Reading the *printed* bar length would need OCR, which is
+why it is asked for instead.

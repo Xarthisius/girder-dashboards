@@ -18,19 +18,29 @@ import io
 MAX_PREVIEW_EDGE = 1400
 
 
-def renderPreview(path, maxEdge=MAX_PREVIEW_EDGE):
+def renderPreview(path, maxEdge=MAX_PREVIEW_EDGE, gray=None):
     """Render ``path`` as a grey PNG, downscaled to fit ``maxEdge``.
 
+    :param gray: the decoded image, when the caller already has it. Preparing a
+        run decodes once and both renders the preview and inspects the pixels for
+        a scale bar and an info panel, which is not worth a second decode of a
+        16-bit TIFF.
     :returns: ``(pngBytes, info)`` where ``info`` carries the full-resolution
         dimensions and the preview's own dimensions. The client needs both to map
         a rectangle drawn on the preview back to full-resolution pixels.
+
+    The **whole** file is rendered, info panel and all. The panel is not analysed,
+    but it is where the instrument printed the scale bar, so hiding it would hide
+    the one thing the user needs in order to check the scale. The runner marks it
+    as excluded on the image instead.
     """
     import numpy as np
     from PIL import Image
 
     from .analysis import loadImage
 
-    gray = loadImage(path)
+    if gray is None:
+        gray = loadImage(path)
     height, width = gray.shape
 
     image = Image.fromarray(np.round(gray * 255.0).astype(np.uint8), mode="L")

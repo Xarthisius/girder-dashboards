@@ -96,7 +96,7 @@ def isTiff(path):
         return False
 
 
-def loadImage(path):
+def loadImage(path, excludeBottomPx=0):
     """Decode an image file to float grey in ``[0, 1]``.
 
     TIFF goes through ``tifffile``, which handles the LZW-compressed and 16-bit
@@ -108,6 +108,15 @@ def loadImage(path):
     dispatching on the extension sent every Celery-path micrograph down the
     non-TIFF branch — quietly decoding with a different library than the
     in-process path used, for a pipeline whose thresholds are absolute.
+
+    ``excludeBottomPx`` drops that many rows off the bottom — the instrument's
+    info panel (see :py:mod:`.scale`). It happens **before** the grey conversion,
+    not after, and that is the whole point: on a 16-bit micrograph the panel's
+    white scale bar and black text are the array's extremes, so leaving them in
+    means the 0-255 stretch is set by the panel and every brightness gate in the
+    detector reads a specimen that has been dimmed to make room for it. Cropping
+    the bottom leaves the origin where it was, so a region's coordinates still
+    mean the same pixels they did on the full image.
     """
     if isTiff(path):
         import tifffile
@@ -131,6 +140,19 @@ def loadImage(path):
     if raw.ndim == 3 and raw.shape[-1] not in (1, 2, 3, 4):
         # A multi-page TIFF: analyse the first page, as the originals did.
         raw = raw[0]
+
+    excludeBottomPx = int(excludeBottomPx or 0)
+    if excludeBottomPx:
+        # Eight rows is the smallest region `_normalizeRegions` accepts, and the
+        # same bound the REST layer rejects an impossible exclusion against;
+        # leaving exactly that many has to be allowed by both or by neither.
+        if not 0 < excludeBottomPx <= raw.shape[0] - 8:
+            raise AnalysisError(
+                f"Cannot exclude the bottom {excludeBottomPx} px of an image that "
+                f"is {raw.shape[0]} px tall."
+            )
+        raw = raw[: raw.shape[0] - excludeBottomPx]
+
     return toGrayscale(raw)
 
 
@@ -373,8 +395,9 @@ def _normalizeRegions(regions, width, height):
         x1, y1 = min(int(width), x + w), min(int(height), y + h)
         if x1 - x0 < 8 or y1 - y0 < 8:
             raise AnalysisError(
-                f"Region '{region.get('label') or index}' is outside the image or "
-                "smaller than 8×8 pixels."
+                f"Region '{region.get('label') or index}' is outside the "
+                f"{int(width)}×{int(height)} px area being analysed, or smaller "
+                "than 8×8 pixels."
             )
 
         normalized.append(
@@ -454,6 +477,7 @@ def analyze(
     regions=None,
     preset=None,
     overrides=None,
+    excludeBottomPx=0,
     progress=None,
 ):
     """Analyse one micrograph and return a JSON-serializable result document.
@@ -466,6 +490,8 @@ def analyze(
         or ``None`` analyses the whole image.
     :param preset: Detection preset name, see :py:data:`PRESETS`.
     :param overrides: Individual detection parameters to override.
+    :param excludeBottomPx: Rows of instrument info panel to drop off the bottom
+        before anything else happens; see :py:func:`loadImage`.
     :param progress: Optional ``callable(fraction, message)`` for job progress.
     """
     try:
@@ -486,7 +512,11 @@ def analyze(
             progress(fraction, message)
 
     report(0.05, "Reading image")
-    gray = loadImage(path)
+    excludeBottomPx = int(excludeBottomPx or 0)
+    # `height` is the *analysed* height from here on: the crop already happened,
+    # and because it came off the bottom, every x/y below is still in the same
+    # frame as the full image the user drew regions on.
+    gray = loadImage(path, excludeBottomPx=excludeBottomPx)
     height, width = gray.shape
     regionSpecs = _normalizeRegions(regions, width, height)
 
@@ -525,7 +555,15 @@ def analyze(
 
     return {
         "version": 1,
-        "image": {"width": int(width), "height": int(height)},
+        # `height` is the whole file's, because that is the frame the stored
+        # coordinates and the preview the browser overlays them on are in;
+        # `contentHeight` is how much of it was actually looked at.
+        "image": {
+            "width": int(width),
+            "height": int(height + excludeBottomPx),
+            "contentHeight": int(height),
+            "excludeBottomPx": excludeBottomPx,
+        },
         "scale": {
             "barMicrons": scaleBarMicrons,
             "barPixels": scaleBarPixels,

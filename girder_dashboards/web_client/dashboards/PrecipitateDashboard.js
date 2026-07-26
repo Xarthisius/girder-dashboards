@@ -110,7 +110,16 @@ var PrecipitateDashboard = View.extend({
         'change #g-precip-scale-microns': '_readForm',
         'change #g-precip-scale-pixels': '_readForm',
         'change #g-precip-preset': '_readForm',
-        'change input[name="g-precip-spacing"]': '_readForm'
+        'change input[name="g-precip-spacing"]': '_readForm',
+        'click .g-precip-scale-restore': '_useDetectedScale',
+        /*
+         * Changing the exclusion moves the boundary of what gets analysed, so it
+         * has to reach the image and the region list — but through a patch, not a
+         * re-render, for the same reason the scale inputs do.
+         */
+        'change #g-precip-exclude-panel': '_onExclusionChanged',
+        'input #g-precip-exclude-px': '_onExclusionChanged',
+        'change #g-precip-exclude-px': '_onExclusionChanged'
     },
 
     initialize: function (settings) {
@@ -125,12 +134,18 @@ var PrecipitateDashboard = View.extend({
         this.jobError = null;
         this.regions = [];
         this.overlay = { detections: true, links: false };
+        // What the backend read out of the image file itself: its pixel scale and
+        // its instrument info panel. Findings, not choices — they prefill the
+        // form and are then the user's to overrule.
+        this.detected = {};
 
         this.form = {
             scaleBarMicrons: this.settings.defaultScaleBarMicrons || 1.0,
             scaleBarPixels: this.settings.defaultScaleBarPixels || 129,
             edgeToEdge: !!this.settings.defaultEdgeToEdge,
-            preset: this.settings.defaultPreset || 'fine'
+            preset: this.settings.defaultPreset || 'fine',
+            excludePanel: false,
+            excludeBottomPx: 0
         };
 
         this.listenTo(eventStream, 'g:event.job_status', this._onJobEvent);
@@ -189,6 +204,8 @@ var PrecipitateDashboard = View.extend({
                 hasResults: !!this.results,
                 overlay: this.overlay,
                 form: Object.assign({}, this.form, { derived: this._derivedScale() }),
+                scaleSource: this._scaleSource(),
+                panel: hasPreview ? this._panelContext() : null,
                 presets: (this.capability.presets || []).map((preset) => ({
                     key: preset.key,
                     label: preset.label,
@@ -287,6 +304,9 @@ var PrecipitateDashboard = View.extend({
             this.results = null;
             this.jobError = null;
             this.regions = [];
+            this.detected = {};
+            this.form.excludePanel = false;
+            this.form.excludeBottomPx = 0;
             this.render();
             return;
         }
@@ -301,6 +321,8 @@ var PrecipitateDashboard = View.extend({
 
                 const state = run.state || {};
                 const request = state.request || {};
+                this.detected = state.detected || {};
+                this._applyDetected(request);
                 if (request.regions) {
                     // A stored whole-image run has one region covering everything;
                     // that is not a selection the user made, so it is not restored
@@ -312,12 +334,6 @@ var PrecipitateDashboard = View.extend({
                         state.image &&
                         request.regions[0].width === state.image.width;
                     this.regions = wholeImage ? [] : request.regions.slice();
-                }
-                if (request.scaleBarMicrons) {
-                    this.form.scaleBarMicrons = request.scaleBarMicrons;
-                    this.form.scaleBarPixels = request.scaleBarPixels;
-                    this.form.edgeToEdge = !!request.edgeToEdge;
-                    this.form.preset = request.preset || this.form.preset;
                 }
 
                 if (state.resultFileId) {
@@ -446,6 +462,7 @@ var PrecipitateDashboard = View.extend({
                 scaleBarPixels: this.form.scaleBarPixels,
                 edgeToEdge: this.form.edgeToEdge,
                 preset: this.form.preset,
+                excludeBottomPx: this._excludeBottomPx(),
                 regions: JSON.stringify(this.regions)
             },
             error: null
@@ -602,7 +619,11 @@ var PrecipitateDashboard = View.extend({
             previewUrl: this._fileUrl(state.previewFileId),
             width: image.width,
             height: image.height,
-            regions: this.regions
+            regions: this.regions,
+            excludeBottomPx: this._excludeBottomPx(),
+            // The measured bar is drawn back onto the image it was measured on,
+            // so "129 px" is something the user can see rather than take on trust.
+            scaleBar: (this.detected.scale || {}).bar
         });
         this.roiSelector.on('g:regionsChanged', (regions) => {
             this.regions = regions;
@@ -703,6 +724,107 @@ var PrecipitateDashboard = View.extend({
         );
     },
 
+    /**
+     * Fill the form in from the run: what it was last analysed with, or failing
+     * that what the backend detected in the image.
+     *
+     * A run that has already been analysed is reproduced exactly — whatever the
+     * user settled on then is what they see now, detection or no detection. Only
+     * a run that has never been analysed gets the detected values, which is the
+     * one moment they are an improvement on a guess rather than an overwrite of
+     * a decision.
+     */
+    _applyDetected: function (request) {
+        const scale = this.detected.scale;
+        const panel = this.detected.panel;
+
+        if (request.scaleBarMicrons) {
+            this.form.scaleBarMicrons = request.scaleBarMicrons;
+            this.form.scaleBarPixels = request.scaleBarPixels;
+            this.form.edgeToEdge = !!request.edgeToEdge;
+            this.form.preset = request.preset || this.form.preset;
+        } else if (scale && scale.barPixels) {
+            // An incomplete scale is a measured bar whose printed length only the
+            // user can read. Filling in the pixel count alone is the whole of what
+            // is known — inventing a length to go with it would be a wrong answer
+            // dressed as a measurement.
+            this.form.scaleBarPixels = scale.barPixels;
+            if (scale.complete) {
+                this.form.scaleBarMicrons = scale.barMicrons;
+            }
+        }
+
+        if (request.excludeBottomPx !== undefined && request.excludeBottomPx !== null) {
+            this.form.excludeBottomPx = request.excludeBottomPx;
+            this.form.excludePanel = request.excludeBottomPx > 0;
+        } else if (panel && panel.height) {
+            this.form.excludeBottomPx = panel.height;
+            this.form.excludePanel = true;
+        } else {
+            this.form.excludeBottomPx = 0;
+            this.form.excludePanel = false;
+        }
+    },
+
+    /** Rows excluded from the bottom, as the analysis will see it. */
+    _excludeBottomPx: function () {
+        const pixels = Math.floor(this.form.excludeBottomPx);
+        return this.form.excludePanel && pixels > 0 ? pixels : 0;
+    },
+
+    /** The height of the image that is actually analysed. */
+    _contentHeight: function () {
+        const image = (this.run && (this.run.state || {}).image) || {};
+        return Math.max(0, (image.height || 0) - this._excludeBottomPx());
+    },
+
+    _useDetectedScale: function () {
+        const scale = this.detected.scale;
+        if (!scale) {
+            return;
+        }
+        this.form.scaleBarPixels = scale.barPixels;
+        if (scale.complete) {
+            this.form.scaleBarMicrons = scale.barMicrons;
+        }
+        this.$('#g-precip-scale-microns').val(this.form.scaleBarMicrons);
+        this.$('#g-precip-scale-pixels').val(this.form.scaleBarPixels);
+        this._readForm();
+        this._renderScaleSource();
+    },
+
+    _onExclusionChanged: function () {
+        this._readForm();
+        this.$('.g-precip-exclude-height').toggleClass('hide', !this.form.excludePanel);
+
+        // Regions the exclusion has just eaten into have to be brought back into
+        // line here and now. Leaving them to be clipped server-side would put a
+        // rectangle on screen that is not the rectangle being analysed.
+        const height = this._contentHeight();
+        const before = this.regions.length;
+        this.regions = this.regions
+            .map((region) => {
+                const bottom = Math.min(region.y + region.height, height);
+                return Object.assign({}, region, { height: bottom - region.y });
+            })
+            .filter((region) => region.height >= 8);
+        if (this.regions.length !== before) {
+            girder.events.trigger('g:alert', {
+                icon: 'info-circled',
+                text: `${before - this.regions.length} region(s) fell inside the excluded band and were removed.`,
+                type: 'info',
+                timeout: 5000
+            });
+        }
+
+        if (this.roiSelector) {
+            this.roiSelector.setExclusion(this._excludeBottomPx());
+            this.roiSelector.setRegions(this.regions);
+        }
+        this._renderRegionList();
+        this._renderPanelNote();
+    },
+
     _readForm: function () {
         const microns = parseFloat(this.$('#g-precip-scale-microns').val());
         const pixels = parseFloat(this.$('#g-precip-scale-pixels').val());
@@ -720,7 +842,21 @@ var PrecipitateDashboard = View.extend({
         if (spacing) {
             this.form.edgeToEdge = spacing === 'edge';
         }
+
+        const toggle = this.$('#g-precip-exclude-panel');
+        if (toggle.length) {
+            this.form.excludePanel = !!toggle.prop('checked');
+        }
+        const excluded = parseInt(this.$('#g-precip-exclude-px').val(), 10);
+        if (isFinite(excluded) && excluded >= 0) {
+            this.form.excludeBottomPx = excluded;
+        }
+
         this._updateDerivedScale();
+        // Whether the form still matches what was detected is a function of the
+        // form, so it has to be recomputed on every keystroke that changes it —
+        // not only when the detected value is applied.
+        this._renderScaleSource();
     },
 
     _derivedScale: function () {
@@ -742,6 +878,95 @@ var PrecipitateDashboard = View.extend({
                 ? `${umPerPx.toFixed(6)} µm/px = ${(umPerPx * 1000).toFixed(2)} nm/px`
                 : 'Enter the scale bar length and how many pixels it spans.'
         );
+    },
+
+    /**
+     * Where the scale in the form came from, if it came from the image.
+     *
+     * Two quite different findings share this line. A vendor header is a pixel
+     * size, so the form can be filled in and the job is done. A bar measured off
+     * the image is only half of one — the length printed beside it is text, and
+     * reading text is not something this does — so the user is told what is
+     * missing and asked for exactly that.
+     */
+    _scaleSource: function () {
+        const scale = this.detected.scale;
+        if (!scale) {
+            return null;
+        }
+
+        const differs = scale.complete
+            ? Math.abs(this.form.scaleBarMicrons / this.form.scaleBarPixels -
+                  scale.barMicrons / scale.barPixels) > 1e-9
+            : this.form.scaleBarPixels !== scale.barPixels;
+
+        return {
+            level: scale.complete ? 'ok' : 'partial',
+            icon: scale.complete ? 'icon-ok-circled' : 'icon-info-circled',
+            message: `${scale.complete ? 'Read from' : 'Measured on'} ` +
+                `${scale.label}. ${scale.detail}`,
+            restorable: differs,
+            restoreLabel: scale.complete
+                ? `Use ${this._number(scale.barMicrons)} µm = ${this._number(scale.barPixels)} px`
+                : `Use ${this._number(scale.barPixels)} px`
+        };
+    },
+
+    /** The info-panel exclusion control: what was found, and what is set. */
+    _panelContext: function () {
+        const panel = this.detected.panel;
+        const image = (this.run && (this.run.state || {}).image) || {};
+
+        let found;
+        if (panel && panel.height) {
+            found =
+                `A ${panel.height} px instrument info panel ` +
+                `(${panel.source === 'pixels' ? 'found in the pixels' : 'stated by the image header'})` +
+                ' sits below the specimen. Its text and drawn scale bar are bright ' +
+                'and round enough to be detected as precipitates.';
+        } else if ('panel' in this.detected) {
+            found = 'No info panel was found at the bottom of this image. Tick this ' +
+                'to exclude a band anyway.';
+        } else {
+            // A run prepared before this existed, or one whose inspection failed.
+            // Nothing was looked for, so "none was found" would be a claim about
+            // something that never happened.
+            found = 'This image was not examined for an info panel. Tick this to ' +
+                'exclude a band at the bottom.';
+        }
+
+        return {
+            detected: !!(panel && panel.height),
+            exclude: this.form.excludePanel,
+            height: this.form.excludeBottomPx,
+            note:
+                `${found} ` +
+                (this._excludeBottomPx()
+                    ? `Analysing the top ${image.width} × ${this._contentHeight()} px.`
+                    : 'The whole image is being analysed.')
+        };
+    },
+
+    _number: function (value) {
+        return Number(value.toFixed(3)).toLocaleString('en-US', {
+            maximumFractionDigits: 3,
+            useGrouping: false
+        });
+    },
+
+    /** Repaint just the scale-source line, so the Use button can come and go. */
+    _renderScaleSource: function () {
+        const source = this._scaleSource();
+        const button = this.$('.g-precip-scale-restore');
+        if (!source) {
+            return;
+        }
+        button.toggleClass('hide', !source.restorable).text(source.restoreLabel);
+    },
+
+    /** Repaint just the info-panel note, which quotes the analysed height. */
+    _renderPanelNote: function () {
+        this.$('.g-precip-exclude-note').text(this._panelContext().note);
     },
 
     _banner: function () {

@@ -21,6 +21,16 @@
           else
             .g-precip-upload-mount
             .g-precip-hint= uploadHint
+          if panel
+            .g-precip-exclude
+              .g-precip-exclude-row
+                label.g-precip-exclude-toggle
+                  input#g-precip-exclude-panel(type="checkbox" checked=panel.exclude)
+                  |  Exclude the info panel
+                .input-group.input-group-sm.g-precip-exclude-height(class=panel.exclude ? '' : 'hide')
+                  input#g-precip-exclude-px.form-control(type="number" step="1" min="0" value=panel.height)
+                  span.input-group-addon px
+              .g-precip-hint.g-precip-exclude-note= panel.note
 
       .g-precip-step(class=hasPreview ? '' : 'g-precip-step-disabled')
         .g-precip-step-head
@@ -40,6 +50,12 @@
                 input#g-precip-scale-pixels.form-control(type="number" step="any" min="0" value=form.scaleBarPixels)
                 span.input-group-addon px
           .g-precip-hint#g-precip-scale-derived= form.derived
+          if scaleSource
+            .g-precip-detected(class=`g-precip-detected-${scaleSource.level}`)
+              i(class=scaleSource.icon)
+              div
+                span.g-precip-detected-message= scaleSource.message
+                button.btn.btn-link.btn-xs.g-precip-scale-restore(type="button" class=scaleSource.restorable ? '' : 'hide')= scaleSource.restoreLabel
 
       .g-precip-step(class=hasPreview ? '' : 'g-precip-step-disabled')
         .g-precip-step-head

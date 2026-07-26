@@ -65,6 +65,19 @@ def micrograph(micrographModule, tmp_path_factory):
     return pathlib.Path(written), count
 
 
+@pytest.fixture(scope="session")
+def micrographWithPanel(micrographModule, tmp_path_factory):
+    """The same micrograph, but as an instrument would have written it.
+
+    Carries a TESCAN header stating the pixel size and an info panel with a scale
+    bar drawn in it, so the detection in ``precipitate.scale`` has a file whose
+    right answers are known by construction rather than by measurement.
+    """
+    path = tmp_path_factory.mktemp("micrograph") / "tescan.tif"
+    written, count = micrographModule.write(str(path), panel=True)
+    return pathlib.Path(written), count
+
+
 @pytest.fixture
 def precipitateDashboard(server, db):
     """The provisioned Precipitate Analysis document, enabled."""

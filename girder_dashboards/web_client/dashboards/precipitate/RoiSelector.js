@@ -44,12 +44,16 @@ var RoiSelector = View.extend({
      * @param settings.width full-resolution image width
      * @param settings.height full-resolution image height
      * @param settings.regions initial regions, in image pixels
+     * @param settings.excludeBottomPx rows of info panel excluded from analysis
+     * @param settings.scaleBar the measured scale bar, if one was found
      */
     initialize: function (settings) {
         this.previewUrl = settings.previewUrl;
         this.imageWidth = settings.width;
         this.imageHeight = settings.height;
         this.regions = (settings.regions || []).slice();
+        this.excludeBottomPx = settings.excludeBottomPx || 0;
+        this.scaleBar = settings.scaleBar || null;
         this.overlay = { detections: true, links: false };
         this.results = null;
     },
@@ -93,6 +97,17 @@ var RoiSelector = View.extend({
         Object.assign(this.overlay, overlay || {});
         this._draw();
         return this;
+    },
+
+    setExclusion: function (excludeBottomPx) {
+        this.excludeBottomPx = excludeBottomPx || 0;
+        this._draw();
+        return this;
+    },
+
+    /** The bottom of the analysed area, in image pixels. */
+    _contentHeight: function () {
+        return Math.max(0, this.imageHeight - this.excludeBottomPx);
     },
 
     // -- pointer handling ------------------------------------------------
@@ -173,10 +188,14 @@ var RoiSelector = View.extend({
      * disagreed with the box the user saw, since the SVG viewBox clips it.
      */
     _clamp: function (rect) {
+        // Clamped to the *analysed* area, not the image: the excluded info panel
+        // is not somewhere a region can reach into, and a rectangle drawn across
+        // the boundary has to end at it rather than be silently trimmed later.
+        const bottom = this._contentHeight();
         const x0 = Math.max(0, Math.min(this.imageWidth, rect.x));
-        const y0 = Math.max(0, Math.min(this.imageHeight, rect.y));
+        const y0 = Math.max(0, Math.min(bottom, rect.y));
         const x1 = Math.max(0, Math.min(this.imageWidth, rect.x + rect.width));
-        const y1 = Math.max(0, Math.min(this.imageHeight, rect.y + rect.height));
+        const y1 = Math.max(0, Math.min(bottom, rect.y + rect.height));
 
         const region = {
             x: Math.round(x0),
@@ -210,6 +229,8 @@ var RoiSelector = View.extend({
         const rect = image.getBoundingClientRect();
         const scale = rect.width ? this.imageWidth / rect.width : 1;
 
+        this._drawExclusion(scale);
+        this._drawScaleBar(scale);
         this._drawResults(scale);
         this._drawRegions(scale);
 
@@ -228,6 +249,82 @@ var RoiSelector = View.extend({
                 })
             );
         }
+    },
+
+    /**
+     * Grey out the info panel that is being left out of the analysis.
+     *
+     * Dimmed rather than cropped: the panel is where the instrument printed the
+     * scale bar, so it is the one part of the image the user may still need to
+     * read while setting the scale.
+     */
+    _drawExclusion: function (scale) {
+        if (!this.excludeBottomPx) {
+            return;
+        }
+        const top = this._contentHeight();
+
+        this.svg.appendChild(
+            el('rect', {
+                x: 0,
+                y: top,
+                width: this.imageWidth,
+                height: this.excludeBottomPx,
+                fill: OVERLAY.excluded,
+                // Enough to read as switched off, little enough that the white
+                // readout text underneath keeps ~3.5:1 against its background —
+                // being able to read the printed bar length is the reason this
+                // is a scrim and not a crop.
+                'fill-opacity': 0.45
+            })
+        );
+        this.svg.appendChild(
+            el('line', {
+                x1: 0,
+                y1: top,
+                x2: this.imageWidth,
+                y2: top,
+                stroke: OVERLAY.excludedEdge,
+                'stroke-width': 1.5 * scale,
+                'stroke-dasharray': `${6 * scale} ${4 * scale}`
+            })
+        );
+
+        // Only worth labelling if the band is tall enough to hold the label.
+        if (this.excludeBottomPx > 22 * scale) {
+            const label = el('text', {
+                x: 6 * scale,
+                y: top + 16 * scale,
+                fill: '#ffffff',
+                stroke: 'rgba(0, 0, 0, 0.65)',
+                'stroke-width': 3 * scale,
+                'paint-order': 'stroke',
+                'font-size': 13 * scale,
+                'font-family': 'system-ui, sans-serif'
+            });
+            label.textContent = `Info panel — ${this.excludeBottomPx} px excluded`;
+            this.svg.appendChild(label);
+        }
+    },
+
+    /** Mark the scale bar that was measured, so the number can be checked. */
+    _drawScaleBar: function (scale) {
+        const bar = this.scaleBar;
+        if (!bar) {
+            return;
+        }
+        const height = Math.max(4, 9 * scale);
+        this.svg.appendChild(
+            el('rect', {
+                x: bar.x,
+                y: bar.y - height,
+                width: bar.width,
+                height: 2 * height,
+                fill: 'none',
+                stroke: OVERLAY.scaleBar,
+                'stroke-width': Math.max(1, 1.5 * scale)
+            })
+        );
     },
 
     _drawRegions: function (scale) {

@@ -278,6 +278,37 @@ def test_analyze_caps_the_number_of_regions(
     assert "At most 2 regions" in resp.json["message"]
 
 
+def test_analyze_refuses_an_exclusion_that_leaves_nothing(
+    server, run, user, monkeypatch
+):
+    """Caught here, not by the job a minute later.
+
+    The run folder already knows how tall the image is, so an impossible
+    exclusion is a bad request, not a failed analysis.
+    """
+    monkeypatch.setattr(precipitateJobs, "schedule", _unreachable)
+    store.ModelStore(run["folder"], user).patchState(
+        {
+            "inputFileId": str(run["file"]["_id"]),
+            "inputName": run["file"]["name"],
+            "image": {"width": 512, "height": 512},
+        }
+    )
+
+    resp = server.request(
+        path=f"/precipitate/run/{run['run']['_id']}/analyze",
+        method="POST",
+        user=user,
+        params={
+            "scaleBarMicrons": 1.0,
+            "scaleBarPixels": 129,
+            "excludeBottomPx": 512,
+        },
+    )
+    assertStatus(resp, 400)
+    assert "nothing to analyse" in resp.json["message"]
+
+
 def _unreachable(*args, **kwargs):
     raise AssertionError("the request should have been rejected before scheduling")
 
@@ -407,6 +438,48 @@ def test_prepare_stores_a_preview_next_to_the_image(run, user, micrograph):
     }
 
 
+def test_prepare_records_what_the_image_says_about_itself(
+    run, user, micrographWithPanel, micrographModule
+):
+    path, _ = micrographWithPanel
+    sink = store.ModelStore(run["folder"], user)
+
+    runner.prepare(str(path), sink)
+
+    detected = store.runState(Folder().load(run["folder"]["_id"], force=True))[
+        "detected"
+    ]
+    assert detected["panel"]["height"] == micrographModule.PANEL_HEIGHT
+    assert detected["scale"]["complete"] is True
+    assert detected["scale"]["barMicrons"] == 1.0
+    assert detected["scale"]["barPixels"] == float(micrographModule.BAR_PIXELS)
+
+
+def test_prepare_survives_an_image_it_cannot_make_sense_of(
+    run, user, micrograph, monkeypatch
+):
+    """A surprise in the metadata costs a prefilled field, not the run.
+
+    Nothing the inspection produces is needed to analyse anything — every value
+    is one the user could type in themselves — so it must never be the reason a
+    run fails.
+    """
+    from girder_dashboards.precipitate import scale as scaleModule
+
+    def explode(*args, **kwargs):
+        raise ValueError("some vendor's tag is not what it claimed")
+
+    monkeypatch.setattr(scaleModule, "inspectMicrograph", explode)
+    path, _ = micrograph
+
+    result = runner.prepare(str(path), store.ModelStore(run["folder"], user))
+
+    assert result["detected"] == {}
+    state = store.runState(Folder().load(run["folder"]["_id"], force=True))
+    assert state["status"] == store.STATUS_READY
+    assert state["previewFileId"]
+
+
 def test_rerunning_a_step_replaces_its_output(run, user, micrograph):
     path, _ = micrograph
     sink = store.ModelStore(run["folder"], user)
@@ -450,6 +523,7 @@ def test_analyze_stores_results_and_a_summary(run, user, micrograph):
     assert state["summary"]["nParticles"] > 0
     # The request is recorded so re-opening the run restores the form and regions.
     assert state["request"]["edgeToEdge"] is True
+    assert state["request"]["excludeBottomPx"] == 0
     assert state["request"]["regions"] == [
         {"label": "ROI 1", "x": 0, "y": 0, "width": 256, "height": 256}
     ]
@@ -529,6 +603,72 @@ def test_a_run_completes_end_to_end_without_a_worker(server, run, user, monkeypa
     assert state["status"] == store.STATUS_COMPLETE
     assert state["summary"]["nParticles"] > 0
     assert _download(state["resultFileId"])["spacingMode"] == "centre-to-centre"
+
+
+def test_a_detected_scale_and_panel_survive_the_whole_round_trip(
+    server,
+    precipitateDashboard,
+    user,
+    fsAssetstore,
+    micrographWithPanel,
+    micrographModule,
+    monkeypatch,
+):
+    """Upload an instrument's own file and let the two steps do the work.
+
+    Everything the dashboard needs in order to fill the scale in and grey out the
+    panel travels as run state, and everything it then asks for travels as the
+    analyze request — so this is the feature end to end over HTTP, with no
+    knowledge of either shared between the two halves except that state.
+    """
+    monkeypatch.setattr(precipitateJobs, "workerAvailable", lambda: False)
+    path, _ = micrographWithPanel
+    created = _createRun(server, user, name="tescan run")
+    folder = Folder().load(created["_id"], force=True)
+    file = _upload(folder, user, path, name="tescan.tif")
+
+    resp = server.request(
+        path=f"/precipitate/run/{created['_id']}/prepare",
+        method="POST",
+        user=user,
+        params={"fileId": str(file["_id"])},
+    )
+    assertStatusOk(resp)
+    _waitForJob(resp.json["_id"])
+
+    state = store.runState(Folder().load(created["_id"], force=True))
+    detected = state["detected"]
+    assert detected["scale"]["barPixels"] == float(micrographModule.BAR_PIXELS)
+    assert detected["panel"]["height"] == micrographModule.PANEL_HEIGHT
+    # The preview is of the whole file, panel included: it is where the scale bar
+    # is printed, so it is the one thing the user needs in order to check the
+    # scale that was filled in for them.
+    assert state["image"]["height"] == 512 + micrographModule.PANEL_HEIGHT
+
+    resp = server.request(
+        path=f"/precipitate/run/{created['_id']}/analyze",
+        method="POST",
+        user=user,
+        params={
+            "scaleBarMicrons": detected["scale"]["barMicrons"],
+            "scaleBarPixels": detected["scale"]["barPixels"],
+            "preset": "fine",
+            "excludeBottomPx": detected["panel"]["height"],
+        },
+    )
+    assertStatusOk(resp)
+    _waitForJob(resp.json["_id"])
+
+    state = store.runState(Folder().load(created["_id"], force=True))
+    assert state["request"]["excludeBottomPx"] == micrographModule.PANEL_HEIGHT
+
+    results = _download(state["resultFileId"])
+    assert results["image"]["contentHeight"] == 512
+    assert results["scale"]["nmPerPx"] == pytest.approx(
+        micrographModule.PIXEL_SIZE_M * 1e9
+    )
+    # Nothing was detected in the panel, because the panel was never looked at.
+    assert max(results["regions"][0]["particles"]["y"]) < 512
 
 
 def _waitForJob(jobId, timeout=90):

@@ -304,6 +304,100 @@ def test_analyze_says_so_when_it_finds_nothing(micrograph):
         analyze(path, SCALE_MICRONS, SCALE_PIXELS, preset="coarse")
 
 
+# --- excluding the info panel -----------------------------------------------
+
+
+def test_excluding_the_panel_keeps_it_out_of_the_results(
+    micrographWithPanel, micrographModule
+):
+    """The panel's text and drawn scale bar are bright, compact and round.
+
+    That is the description of a precipitate, so left in they are detected as
+    several dozen of them, and they drag the pooled statistics with them.
+    """
+    path, _ = micrographWithPanel
+    panelHeight = micrographModule.PANEL_HEIGHT
+
+    included = analyze(path, SCALE_MICRONS, SCALE_PIXELS, preset="fine")
+    excluded = analyze(
+        path, SCALE_MICRONS, SCALE_PIXELS, preset="fine", excludeBottomPx=panelHeight
+    )
+
+    assert excluded["pooled"]["nTotal"] < included["pooled"]["nTotal"]
+    # Nothing survives below the boundary, which is the actual claim.
+    lowest = max(excluded["regions"][0]["particles"]["y"])
+    assert lowest < excluded["image"]["contentHeight"]
+
+    assert excluded["image"]["excludeBottomPx"] == panelHeight
+    assert excluded["image"]["contentHeight"] == 512
+    # The full height is still reported: it is the frame the coordinates above
+    # are in, and the frame the browser overlays them on.
+    assert excluded["image"]["height"] == 512 + panelHeight
+
+
+def test_excluding_the_panel_matches_analysing_the_specimen_alone(
+    micrograph, micrographWithPanel, micrographModule
+):
+    """The two fixtures share their specimen pixels exactly, by construction.
+
+    So cropping the panel off has to reproduce the plain micrograph's numbers
+    outright — not merely improve on leaving it in.
+    """
+    plainPath, _ = micrograph
+    panelPath, _ = micrographWithPanel
+
+    plain = analyze(plainPath, SCALE_MICRONS, SCALE_PIXELS, preset="fine")
+    cropped = analyze(
+        panelPath,
+        SCALE_MICRONS,
+        SCALE_PIXELS,
+        preset="fine",
+        excludeBottomPx=micrographModule.PANEL_HEIGHT,
+    )
+
+    assert cropped["pooled"]["nTotal"] == plain["pooled"]["nTotal"]
+    assert cropped["pooled"]["diameter"]["mean"] == plain["pooled"]["diameter"]["mean"]
+    assert cropped["pooled"]["spacing"]["mean"] == plain["pooled"]["spacing"]["mean"]
+
+
+def test_a_region_reaching_into_the_panel_is_clipped_at_the_boundary(
+    micrographWithPanel, micrographModule
+):
+    path, _ = micrographWithPanel
+    height = 512 + micrographModule.PANEL_HEIGHT
+
+    results = analyze(
+        path,
+        SCALE_MICRONS,
+        SCALE_PIXELS,
+        preset="fine",
+        regions=[{"label": "ROI 1", "x": 0, "y": 300, "width": 512, "height": height}],
+        excludeBottomPx=micrographModule.PANEL_HEIGHT,
+    )
+
+    assert results["regions"][0]["bbox"] == {
+        "x": 0,
+        "y": 300,
+        "width": 512,
+        "height": 212,
+    }
+
+
+def test_a_region_entirely_inside_the_panel_is_refused(
+    micrographWithPanel, micrographModule
+):
+    path, _ = micrographWithPanel
+    with pytest.raises(AnalysisError, match="512×512 px area being analysed"):
+        analyze(
+            path,
+            SCALE_MICRONS,
+            SCALE_PIXELS,
+            preset="fine",
+            regions=[{"x": 0, "y": 520, "width": 200, "height": 40}],
+            excludeBottomPx=micrographModule.PANEL_HEIGHT,
+        )
+
+
 # --- preview ----------------------------------------------------------------
 
 

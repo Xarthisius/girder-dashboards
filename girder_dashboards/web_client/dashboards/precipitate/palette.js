@@ -44,7 +44,23 @@ export const INK = {
 export const OVERLAY = {
     detection: '#3987e5',
     link: '#eda100',
-    region: '#e34948'
+    region: '#e34948',
+    /*
+     * The info panel being left out of the analysis. A neutral scrim rather than
+     * a fourth hue, because "excluded" is the absence of a category, not another
+     * one — and because whatever is under it still has to be readable, which is
+     * the entire reason it is dimmed instead of cropped.
+     */
+    excluded: '#14120d',
+    excludedEdge: '#f2f0e9',
+    /*
+     * The scale bar that was measured. A hue of its own, since with the exclusion
+     * switched off it can share the panel with detection circles and links —
+     * which is exactly the comparison a user makes when deciding whether to
+     * exclude it. Form separates it further: it is the only rectangle outline
+     * that is not a region, and regions cannot be drawn here.
+     */
+    scaleBar: '#a374e8'
 };
 
 /**

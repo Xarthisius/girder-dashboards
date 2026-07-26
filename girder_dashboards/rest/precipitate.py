@@ -27,6 +27,10 @@ from ..precipitate.presets import PRESETS
 #: brightness gates assume that kind of image.
 ALLOWED_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp")
 
+#: Rows that must survive excluding an info panel, matching the smallest region
+#: ``analysis._normalizeRegions`` will accept.
+MIN_CONTENT_PX = 8
+
 
 class Precipitate(Resource):
     """Runs of the precipitate detection / inter-particle spacing pipeline."""
@@ -247,7 +251,9 @@ class Precipitate(Resource):
         )
         .notes(
             "Schedules a job. Follow it as usual; when it succeeds the run's "
-            "state carries previewFileId and the full-resolution dimensions."
+            "state carries previewFileId, the full-resolution dimensions, and "
+            "under 'detected' whatever the file itself said about its pixel "
+            "scale and its instrument info panel."
         )
         .modelParam(
             "id",
@@ -321,6 +327,15 @@ class Precipitate(Resource):
             required=False,
             enum=sorted(PRESETS),
         )
+        .param(
+            "excludeBottomPx",
+            "Rows of instrument info panel to exclude from the bottom of the "
+            "image. The prepare step reports what it detected under "
+            "state.detected.panel; 0 analyses the whole image.",
+            dataType="integer",
+            required=False,
+            default=0,
+        )
         .jsonParam(
             "regions",
             "JSON array of regions of interest, each {label, x, y, width, "
@@ -345,6 +360,7 @@ class Precipitate(Resource):
         scaleBarPixels,
         edgeToEdge,
         preset,
+        excludeBottomPx,
         regions,
         overrides,
     ):
@@ -365,6 +381,20 @@ class Precipitate(Resource):
                 "The scale bar length and pixel count must both be positive.", code=400
             )
 
+        # Checked here rather than left to the analysis, because the run folder
+        # already knows how tall the image is: an impossible exclusion should come
+        # back as a 400 on this request, not as a failed job a minute later.
+        excludeBottomPx = int(excludeBottomPx or 0)
+        imageHeight = int((state.get("image") or {}).get("height") or 0)
+        if excludeBottomPx < 0 or (
+            imageHeight and excludeBottomPx >= imageHeight - MIN_CONTENT_PX
+        ):
+            raise RestException(
+                f"The image is {imageHeight} px tall; excluding the bottom "
+                f"{excludeBottomPx} px would leave nothing to analyse.",
+                code=400,
+            )
+
         regions = regions or []
         maxRegions = int(settings.get("maxRegions") or 0)
         if maxRegions and len(regions) > maxRegions:
@@ -379,6 +409,7 @@ class Precipitate(Resource):
             "scaleBarPixels": float(scaleBarPixels),
             "edgeToEdge": bool(edgeToEdge),
             "preset": preset or settings.get("defaultPreset"),
+            "excludeBottomPx": excludeBottomPx,
             "regions": regions,
             "overrides": overrides or {},
         }

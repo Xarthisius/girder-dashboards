@@ -28,8 +28,11 @@ An implementation of the precipitate-detection and inter-particle-spacing pipeli
 turned into something you can run from a browser:
 
 1. **Upload** an SEM/TEM micrograph (TIFF, including the LZW and 16-bit variants instrument
-   software emits).
-2. **Set the scale** — the length of the image's scale bar in µm, and how many pixels it spans.
+   software emits). The backend reads what the file says about itself: the **pixel scale**, from
+   the vendor header or from the scale bar drawn on the image, and the **info panel** across the
+   bottom, which is excluded from the analysis (see below).
+2. **Check the scale** — the length of the image's scale bar in µm and how many pixels it spans,
+   filled in already if either could be read, with a note saying where it came from.
 3. **Choose the spacing measure** — centre-to-centre or edge-to-edge.
 4. **Select regions of interest** by dragging on the image, as many as you like, or select none
    and the whole image is analysed as one region. Each region is detected and measured on its
@@ -44,6 +47,31 @@ Every input and output is a Girder object in a folder of the user's own — `Pre
 Analysis/<run>/` in their user space, holding the uploaded micrograph, the preview the backend
 rendered for region selection, and `results.json`, which carries per-particle arrays
 (`x`, `y`, `diameterNm`, `spacingNm`, `nnIndex`, …) plus per-region and pooled statistics.
+
+### The scale, and the info panel
+
+Both are things the instrument already recorded, so neither should have to be typed in.
+
+**The scale** is looked for in two places, in order. A **vendor header** — TESCAN's private tag
+50431, or FEI/Thermo's tag 34682 — states the pixel size outright, and the form is filled in
+with the scale bar the image itself is printed with (`50 µm = 370.656 px`, not `1 µm = 7.4 px`),
+so the number on screen is one you can check against the number on the image. Failing that, the
+**bar drawn in the info panel** is measured: that gives the pixel count but not the length
+printed beside it, which is text, so the pixel count is filled in and you are asked for the
+length. Either way the dashboard says which happened, marks the bar it measured on the image,
+and offers the detected value back if you change it. The standard TIFF resolution tags are
+deliberately *not* consulted: on every real micrograph tested they held a leftover screen or
+print DPI, which would be a confidently wrong answer.
+
+**The info panel** — the strip of instrument readings across the bottom — is found from the same
+header where it states one, and otherwise from the pixels, and excluded from the analysis by
+default. It is not specimen: its text and drawn scale bar are the brightest, roundest, most
+compact things in the file, and are detected as precipitates. On the sample micrograph the
+research code ships, leaving it in invents 35 particles and shifts the mean diameter by 2.6%;
+excluding it reproduces the hand-cropped file the published analysis used to within 0.02%. It is
+also what decides the 0-255 stretch on a 16-bit image, which is why the crop happens before the
+grey conversion rather than after. The panel is dimmed on the preview rather than hidden — it is
+where the scale bar is printed — and the exclusion is a checkbox with an editable height.
 
 The two detection tunings published with the research code are offered as presets: **fine** for
 small dim precipitates (725 °C, 1 hr) and **coarse** for large bright ones (725 °C, 5 hr). The
@@ -152,8 +180,8 @@ and refuses to work while the dashboard is disabled.
 | `GET /precipitate/capability` | Whether the analysis dependencies are installed, whether a Celery worker is available, the detection presets, and the admin-set form defaults |
 | `GET`/`POST /precipitate/run` | List runs; create a folder for a new one |
 | `GET`/`DELETE /precipitate/run/{id}` | One run's state; delete it and its contents |
-| `POST /precipitate/run/{id}/prepare` | Schedule the decode + preview step for an uploaded image |
-| `POST /precipitate/run/{id}/analyze` | Schedule the analysis: scale, spacing mode, preset, regions |
+| `POST /precipitate/run/{id}/prepare` | Schedule the decode + preview step for an uploaded image, which also reports the pixel scale and info panel it found under `state.detected` |
+| `POST /precipitate/run/{id}/analyze` | Schedule the analysis: scale, spacing mode, preset, regions, `excludeBottomPx` |
 
 Both `POST`s return a Girder job to follow. The micrograph is uploaded with Girder's own file
 endpoints, and the preview and results are downloaded with them too — this resource never proxies
