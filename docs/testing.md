@@ -1,8 +1,9 @@
 # Testing, verification and CI
 
 The full detail behind the short Commands section in `../CLAUDE.md`: the pytest gotchas, the
-smoke run, the browser harness and the GitHub Actions workflow. Precipitate-specific fixtures
-and the fidelity check are in `precipitate.md`.
+smoke run, the browser harness and the GitHub Actions workflow. Dashboards shipped by other
+plugins bring their own suite and their own harness — see
+`../girder-dashboards-precipitate/docs/testing.md`.
 
 ## Test-suite gotchas
 
@@ -13,13 +14,16 @@ and the fidelity check are in `precipitate.md`.
   `provisionAll()`) re-runs against each test's fresh database. That is why the `dataOverview`
   fixture can just `findOne` the provisioned doc.
 - Tests are marked module-wide via `pytestmark = pytest.mark.plugin("dashboards")`.
-- **Assertions about one dashboard must be keyed, not positional.** Two dashboards now ship, so
-  `dashboards[0]` and `len(...) == 1` are wrong; `test_dashboard.py::_byKey` and `verify.cjs`'s
-  `cardFor`/`configRowFor` exist for that reason.
+- **Assertions about one dashboard must be keyed, not positional.** Only one dashboard ships here
+  now, but other plugins install their own into the same listing, so `dashboards[0]` and
+  `len(...) == 1` are still wrong; `test_dashboard.py::_byKey` and `verify.cjs`'s
+  `cardFor`/`configRowFor` exist for that reason. The suite is run with other dashboard plugins
+  installed in the same venv — `pytest.mark.plugin("dashboards")` keeps them out of the *server*
+  fixture, but nothing keeps them out of a developer's `girder serve`.
 - **Build the web client first.** `registerPluginStaticContent` md5-hashes every file in
   `web_client/dist` at load time to build cache-busting URLs, so with no bundle present `load()`
   raises `FileNotFoundError` and every test using the `server` fixture errors out (the
-  pure-registry and pure-algorithm ones still pass, which makes the cause easy to misread). This
+  pure-registry ones still pass, which makes the cause easy to misread). This
   is why CI builds the web client before `tox -e pytest`. `dist/` is gitignored but `MANIFEST.in`
   ships it, so build before packaging too.
 
@@ -36,9 +40,14 @@ reachable. First `POST /api/v1/user` creates a site admin.
 ## Browser verification
 
 `test/browser/verify.cjs` drives headless Chrome and asserts all four brief requirements end to
-end, plus a whole precipitate analysis run and its failure path, across an anonymous session, an
-admin session and an analysis session. It also **fails on any console error, page error or failed
-request**, which is how both 401 defects were caught.
+end, across an anonymous session and an admin session. It also **fails on any console error, page
+error or failed request**, which is how the `GET /user` 401 was caught.
+
+It **adapts to whatever else is installed**: it requires only `data-overview`, counts cards against
+the API listing rather than a fixed number, and re-enables everything it disabled. The one check
+that needs a second dashboard — that a config-page toggle acts on one dashboard at a time — logs a
+`SKIP` line when there isn't one, rather than passing quietly. Install
+`girder-dashboards-precipitate` (or any other dashboard plugin) to cover it.
 
 ```bash
 # one-off: install the harness's own playwright
@@ -47,27 +56,13 @@ request**, which is how both 401 defects were caught.
 # then, against a running Girder:
 GIRDER_MONGO_URI=mongodb://localhost:27017/girder_dashboards_ci \
   venv/bin/girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
-python3 test/browser/seed.py       # admin, assetstore, both dashboards enabled, sample data
-node test/browser/verify.cjs       # 132/132 expected
+python3 test/browser/seed.py       # admin, the bundled dashboard enabled, sample collections
+node test/browser/verify.cjs       # 62/62 expected
 ```
 
 `seed.py` is stdlib-only (no venv needed) and idempotent, so it works on a fresh *or* dirty
-instance. It also creates a **filesystem assetstore** (under `build/assetstore`) — a fresh Girder
-has none, and without one the micrograph upload 500s — and writes the synthetic micrograph to
-`test/browser/fixtures/`. `verify.cjs` leaves both dashboards re-enabled, so it too is repeatable.
-
-To drive the **Celery** path instead of the in-process fallback, start Girder and a worker against
-the same broker before seeding:
-
-```bash
-export GIRDER_WORKER_BROKER=redis://127.0.0.1:6379/1 GIRDER_WORKER_BACKEND=redis://127.0.0.1:6379/1
-venv/bin/girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
-venv/bin/celery -A girder_worker.app worker -Q local -c 2 -l INFO > worker.log 2>&1 &
-```
-
-The harness asserts on the dashboard's own "where this runs" line, so it passes either way and the
-log says which path was exercised. Both were run at 98/98, before the scale/panel checks were added
-— re-running the Celery path at 118 is worth doing next time a broker is to hand.
+instance. `verify.cjs` re-enables every dashboard it disabled, so it too is repeatable — and so
+another plugin's harness can run against the same instance afterwards.
 
 Configure both via `GIRDER_URL` / `GIRDER_ADMIN` / `GIRDER_PASSWORD`, plus `SHOTS` for
 screenshots, which land in `test/browser/screenshots/` (gitignored). **Read the screenshots** —
@@ -87,9 +82,8 @@ runs on pushes to `main`, on PRs, and on demand. Two jobs, both on `ubuntu-24.04
 `mongo:4.4` service (matching the version everything here was verified against):
 
 - **`test`** — `npm ci && npm run build`, then `tox -e lint`, then `tox -e pytest`. The build step
-  is load-bearing, not cosmetic; see the warning above. `[testenv:pytest]` declares
-  `extras = precipitate`, without which the analysis tests cannot import numpy.
-- **`browser`** — `pip install -e '.[precipitate]'`, build the web client, `npm ci` + `playwright
+  is load-bearing, not cosmetic; see the warning above.
+- **`browser`** — `pip install -e .`, build the web client, `npm ci` + `playwright
   install chromium` in `test/browser`, start `girder serve` on 8989 with a wait loop, `seed.py`, then
   `verify.cjs`. Screenshots and `girder.log` upload as an artifact on every run (`if: always()`),
   which is what you want when a headless failure needs diagnosing. There is no broker in CI, so this

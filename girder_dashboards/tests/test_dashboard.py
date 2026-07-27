@@ -7,7 +7,6 @@ from pytest_girder.assertions import assertStatus, assertStatusOk
 
 from girder_dashboards.builtin import DATA_OVERVIEW_KEY
 from girder_dashboards.models.dashboard import Dashboard as DashboardModel
-from girder_dashboards.precipitate import KEY as PRECIPITATE_KEY
 from girder_dashboards.registry import registerDashboard, unregisterDashboard
 
 pytestmark = pytest.mark.plugin("dashboards")
@@ -33,7 +32,7 @@ def _get(server, user=None, **params):
 def _byKey(dashboards):
     """Index a listing by key.
 
-    More than one dashboard ships with this plugin, so assertions about a
+    Other plugins install dashboards of their own, so assertions about a
     particular one must not depend on how many others exist.
     """
     return {dashboard["key"]: dashboard for dashboard in dashboards}
@@ -53,12 +52,6 @@ def test_builtin_dashboard_is_provisioned(server, db):
     # Disabled until an admin opts in, but readable by everyone once enabled.
     assert doc["enabled"] is False
     assert doc["public"] is True
-
-
-def test_precipitate_dashboard_credits_its_authors(server, db):
-    doc = DashboardModel().findOne({"key": PRECIPITATE_KEY})
-
-    assert doc["authors"] == ["Hasan Al Jame", "Mohadeseh Taheri-Mousavi"]
 
 
 def test_provision_backfills_authors_on_an_older_document(server, dataOverview):
@@ -171,16 +164,19 @@ def test_acl_restricts_listing(server, enabledDataOverview, user, otherUser):
 def test_unavailable_dashboard_is_hidden_from_users(
     server, enabledDataOverview, admin, user
 ):
+    # A second dashboard, as a plugin installed alongside this one would supply,
+    # so that "one going away" can be told apart from "everything going away".
+    registerDashboard("still-here", name="Still Here")
     unregisterDashboard(DATA_OVERVIEW_KEY)
 
-    assert _get(server, user=user) == []
+    assert _byKey(_get(server, user=user)) == {}
 
     dashboards = _byKey(
         _get(server, user=admin, includeDisabled=True, includeUnavailable=True)
     )
     assert dashboards[DATA_OVERVIEW_KEY]["available"] is False
     # Unregistering one dashboard must not make the others look uninstalled.
-    assert dashboards[PRECIPITATE_KEY]["available"] is True
+    assert dashboards["still-here"]["available"] is True
 
 
 # --- updating ---------------------------------------------------------------

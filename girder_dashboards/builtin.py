@@ -1,5 +1,9 @@
 """The dashboards this plugin ships itself.
 
+One: *Data Overview*, a worked example. Anything larger belongs in its own
+distribution — see ``docs/extending.md``, and ``girder-dashboards-precipitate``
+for a real one.
+
 Kept separate from ``__init__`` so it reads as an example of what a third-party
 plugin has to do: call :py:func:`~girder_dashboards.registry.registerDashboard`
 from ``load()`` and register a view under the same key in its web client.
@@ -46,7 +50,6 @@ def _dataUri(svg: str) -> str:
 
 def registerBuiltinDashboards():
     """Register the dashboards bundled with this plugin."""
-    from .precipitate import registerPrecipitateDashboard
     from .registry import registerDashboard
 
     registerDashboard(
@@ -61,7 +64,3 @@ def registerBuiltinDashboards():
         icon="icon-chart-bar",
         settings={"collectionLimit": 10},
     )
-
-    # Declared in its own package, which owns the whole vertical slice: the
-    # algorithm, the Celery task, the storage layout and the REST resource.
-    registerPrecipitateDashboard()

@@ -18,79 +18,27 @@ usual header, navigation or footer, just the dashboard and a top bar with the wa
   controls who may open it.
 - **Full-window runner** (`#dashboard/<id>`) — the dashboard renders under Girder's
   `Layout.EMPTY`, with a *Dashboards* back link in its own top navbar.
-- **Two bundled dashboards** — *Data Overview*, a small worked example, and
-  *Precipitate Analysis*, a real analysis pipeline (see below).
+- **One bundled dashboard** — *Data Overview*, a small worked example. Real dashboards are
+  separate plugins (see below).
 
-## The Precipitate Analysis dashboard
+## Dashboards live in their own plugins
 
-An implementation of the precipitate-detection and inter-particle-spacing pipeline from
-[Taheri-Mousavi Laboratory / Image-analysis-precipitate-detection-and-particle-spacing-estimation](https://github.com/Taheri-Mousavi-Laboratory/Image-analysis-precipitate-detection-and-particle-spacing-estimation),
-turned into something you can run from a browser:
-
-1. **Upload** an SEM/TEM micrograph (TIFF, including the LZW and 16-bit variants instrument
-   software emits). The backend reads what the file says about itself: the **pixel scale**, from
-   the vendor header or from the scale bar drawn on the image, and the **info panel** across the
-   bottom, which is excluded from the analysis (see below).
-2. **Check the scale** — the length of the image's scale bar in µm and how many pixels it spans,
-   filled in already if either could be read, with a note saying where it came from.
-3. **Choose the spacing measure** — centre-to-centre or edge-to-edge.
-4. **Select regions of interest** by dragging on the image, as many as you like, or select none
-   and the whole image is analysed as one region. Each region is detected and measured on its
-   own and then pooled, exactly as the original treated its three separate ROI files.
-5. **Wait** — the computation is a Celery task, reported as a normal Girder job with progress.
-6. **Read the numbers** — size and spacing histograms with mean/median rules, a spacing map, the
-   detection and nearest-neighbour overlays on the micrograph itself, and pooled and per-region
-   statistics tables. Everything is drawn in the browser from stored numbers; the backend
-   produces no figures.
-
-Every input and output is a Girder object in a folder of the user's own — `Precipitate
-Analysis/<run>/` in their user space, holding the uploaded micrograph, the preview the backend
-rendered for region selection, and `results.json`, which carries per-particle arrays
-(`x`, `y`, `diameterNm`, `spacingNm`, `nnIndex`, …) plus per-region and pooled statistics.
-
-### The scale, and the info panel
-
-Both are things the instrument already recorded, so neither should have to be typed in.
-
-**The scale** is looked for in two places, in order. A **vendor header** — TESCAN's private tag
-50431, or FEI/Thermo's tag 34682 — states the pixel size outright, and the form is filled in
-with the scale bar the image itself is printed with (`50 µm = 370.656 px`, not `1 µm = 7.4 px`),
-so the number on screen is one you can check against the number on the image. Failing that, the
-**bar drawn in the info panel** is measured: that gives the pixel count but not the length
-printed beside it, which is text, so the pixel count is filled in and you are asked for the
-length. Either way the dashboard says which happened, marks the bar it measured on the image,
-and offers the detected value back if you change it. The standard TIFF resolution tags are
-deliberately *not* consulted: on every real micrograph tested they held a leftover screen or
-print DPI, which would be a confidently wrong answer.
-
-**The info panel** — the strip of instrument readings across the bottom — is found from the same
-header where it states one, and otherwise from the pixels, and excluded from the analysis by
-default. It is not specimen: its text and drawn scale bar are the brightest, roundest, most
-compact things in the file, and are detected as precipitates. On the sample micrograph the
-research code ships, leaving it in invents 35 particles and shifts the mean diameter by 2.6%;
-excluding it reproduces the hand-cropped file the published analysis used to within 0.02%. It is
-also what decides the 0-255 stretch on a 16-bit image, which is why the crop happens before the
-grey conversion rather than after. The panel is dimmed on the preview rather than hidden — it is
-where the scale bar is printed — and the exclusion is a checkbox with an editable height.
-
-The two detection tunings published with the research code are offered as presets: **fine** for
-small dim precipitates (725 °C, 1 hr) and **coarse** for large bright ones (725 °C, 5 hr). The
-port is numerically faithful — see `test/fidelity/compare_to_original.py`, which compares every
-reported statistic against the original scripts.
-
-### Installing it
-
-The analysis stack is an **extra**, so a Girder that only wants the other dashboards is not made
-to carry scikit-image:
+Beyond the bundled example, a dashboard is a **separate pip-installable plugin** that declares
+itself against this one. Installing it adds a card; uninstalling it takes the card away and leaves
+the admin's settings behind in case it comes back.
 
 ```bash
-pip install 'girder-dashboards[precipitate]'
+pip install girder-dashboards girder-dashboards-precipitate
 ```
 
-Install it in **both** the Girder environment and the Celery worker environment. The dashboard
-reports missing dependencies on its own page rather than failing a run, and falls back to running
-the computation in the Girder process when no Celery worker is consuming the `local` queue — so it
-also works on a plain `girder serve`.
+[`girder-dashboards-precipitate`](https://github.com/Xarthisius/girder-dashboards-precipitate) is
+the worked example of a substantial one: precipitate detection and inter-particle spacing
+measurement on SEM/TEM micrographs, with a Celery backend, its own REST resource and its own
+scientific-stack extra. None of that is this package's concern — which is the point.
+
+To write your own, see **`docs/extending.md`**. It is a step-by-step recipe with a complete
+copy-pasteable example, and it was verified by building that example and driving it in a browser.
+
 
 ## How a dashboard is put together
 
@@ -149,7 +97,10 @@ The view is instantiated with `{el, parentView, dashboard, settings}`, where `da
 own the viewport below the top bar.
 
 Registering after this plugin has loaded is fine — new registrations are provisioned immediately
-rather than at the next restart.
+rather than at the next restart. **Call `getPlugin("dashboards").load(info)` first**, though: that
+is what puts this plugin's bundle ahead of yours in the browser, and your entry point reads
+`girder.plugins.dashboards` at module scope. `docs/extending.md` has the full story, including
+packaging, the Vite config and how to test it.
 
 ## REST API
 
@@ -169,23 +120,6 @@ All routes are under `/api/v1/dashboard`.
 Every response carries an extra `available` flag: `false` means the document's key no longer has a
 registered implementation, e.g. the plugin that shipped it was uninstalled. Such dashboards are
 hidden from the gallery but still listed on the config page so an admin can remove them.
-
-### Precipitate analysis runs
-
-Under `/api/v1/precipitate`. Every route requires a signed-in user with `READ` on the dashboard,
-and refuses to work while the dashboard is disabled.
-
-| Route | Purpose |
-|---|---|
-| `GET /precipitate/capability` | Whether the analysis dependencies are installed, whether a Celery worker is available, the detection presets, and the admin-set form defaults |
-| `GET`/`POST /precipitate/run` | List runs; create a folder for a new one |
-| `GET`/`DELETE /precipitate/run/{id}` | One run's state; delete it and its contents |
-| `POST /precipitate/run/{id}/prepare` | Schedule the decode + preview step for an uploaded image, which also reports the pixel scale and info panel it found under `state.detected` |
-| `POST /precipitate/run/{id}/analyze` | Schedule the analysis: scale, spacing mode, preset, regions, `excludeBottomPx` |
-
-Both `POST`s return a Girder job to follow. The micrograph is uploaded with Girder's own file
-endpoints, and the preview and results are downloaded with them too — this resource never proxies
-bytes that core already serves with the right ACL checks.
 
 ## Development
 
@@ -215,27 +149,16 @@ End-to-end browser check, against a running Girder:
 
 ```bash
 (cd test/browser && npm ci && npx playwright install chromium)   # once
-python3 test/browser/seed.py     # admin, assetstore, enabled dashboards, sample data
+python3 test/browser/seed.py     # admin, the bundled dashboard enabled, sample collections
 node test/browser/verify.cjs
 ```
 
 It drives headless Chrome through the gallery, the runner and the config page as both an anonymous
-and an admin user, then runs a whole precipitate analysis through the UI — upload, region
-selection, job, plots and tables — and fails on any console error or failed request. Screenshots
-are written to `test/browser/screenshots/`. Configure with `GIRDER_URL`, `GIRDER_ADMIN`,
-`GIRDER_PASSWORD`. Both scripts are idempotent, so they can be re-run against the same instance.
-
-To exercise the Celery path rather than the in-process fallback, point Girder and a worker at the
-same broker before seeding:
-
-```bash
-export GIRDER_WORKER_BROKER=redis://127.0.0.1:6379/1
-export GIRDER_WORKER_BACKEND=redis://127.0.0.1:6379/1
-girder serve --host 127.0.0.1 --port 8989 &
-celery -A girder_worker.app worker -Q local -c 2 -l INFO &
-```
-
-The dashboard says which path it is using, and the harness asserts on that line either way.
+and an admin user, and fails on any console error or failed request. Screenshots are written to
+`test/browser/screenshots/`. Configure with `GIRDER_URL`, `GIRDER_ADMIN`, `GIRDER_PASSWORD`. Both
+scripts are idempotent, so they can be re-run against the same instance, and the harness adapts to
+whatever other dashboard plugins are installed alongside. Those plugins bring their own harness for
+their own dashboard.
 
 CI (`.github/workflows/build-test.yaml`) runs lint, the Python tests, and the browser check on
 every push to `main` and every pull request.

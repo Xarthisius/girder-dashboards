@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from girder.plugin import GirderPlugin, getPlugin, registerPluginStaticContent
+from girder.plugin import GirderPlugin, registerPluginStaticContent
 from girder.utility.model_importer import ModelImporter
 
 from .builtin import registerBuiltinDashboards
@@ -14,7 +14,6 @@ from .registry import (
     unregisterDashboard,
 )
 from .rest.dashboard import Dashboard as DashboardResource
-from .rest.precipitate import Precipitate as PrecipitateResource
 
 __all__ = [
     "DashboardDefinition",
@@ -30,11 +29,6 @@ class DashboardsPlugin(GirderPlugin):
     DISPLAY_NAME = "Dashboards"
 
     def load(self, info):
-        # The Precipitate Analysis dashboard schedules its computation as a job,
-        # and its web client shows job progress, so the jobs plugin has to be
-        # loaded before ours registers anything.
-        getPlugin("jobs").load(info)
-
         ModelImporter.registerModel("dashboard", DashboardModel, plugin="dashboards")
 
         registerBuiltinDashboards()
@@ -48,7 +42,6 @@ class DashboardsPlugin(GirderPlugin):
         model.provisionAll()
 
         info["apiRoot"].dashboard = DashboardResource()
-        info["apiRoot"].precipitate = PrecipitateResource()
 
         registerPluginStaticContent(
             plugin="dashboards",

@@ -8,7 +8,7 @@ These are **not** imported — read the file only when the work calls for it:
 
 | File | Read it when |
 |---|---|
-| `docs/precipitate.md` | Touching the **Precipitate Analysis** dashboard: the algorithm port and its fidelity check, the Celery/in-process execution paths, run storage, scale & info-panel detection, its charts, `/api/v1/precipitate`, its deployment needs and its defect history. Nothing in it is needed to work on dashboards in general. |
+| `docs/extending.md` | Adding a **new dashboard**, especially as a separate pip-installable plugin: the two-halves contract in mechanical detail, why `getPlugin("dashboards").load(info)` must come first, what a dashboard view is handed, packaging/Vite/testing for an out-of-tree plugin, and the gaps between today's layout and a "one plugin per dashboard" deployment. |
 | `docs/testing.md` | Running or changing the test suite beyond `pytest`/`ruff`: pytest gotchas, the local smoke run, the `test/browser` harness (incl. the Celery path), and the CI workflow. |
 
 ## What this is
@@ -16,6 +16,10 @@ These are **not** imported — read the file only when the work calls for it:
 `girder-dashboards` — a **Girder 5** plugin adding a new class of entity: **Dashboards**,
 lightweight interactive UIs operating on the data gathered in a Girder instance. It ships a
 Python server plugin plus a Backbone `web_client` bundled with Vite.
+
+It is deliberately **small**: the framework, plus one worked-example dashboard. Real dashboards
+are separate pip-installable plugins — see `docs/extending.md`, and
+`../girder-dashboards-precipitate` for one.
 
 Built to satisfy the original brief (`TASK.md`, not checked in):
 
@@ -25,8 +29,8 @@ Built to satisfy the original brief (`TASK.md`, not checked in):
 4. Dashboards render **without** the standard Girder layout, with a "go back" link in their own
    top navbar.
 
-Two dashboards ship with it: **Data Overview** (a small worked example) and **Precipitate
-Analysis** (a real analysis pipeline with a Celery backend — see `docs/precipitate.md`).
+One dashboard ships with it: **Data Overview**, a small worked example. *Precipitate Analysis*
+lived here until 2026-07-27 and is now `../girder-dashboards-precipitate`.
 
 ## Girder core architecture (upstream)
 
@@ -75,13 +79,8 @@ girder_dashboards/
   builtin.py           # the bundled "data-overview" dashboard + its inline-SVG card image
   models/dashboard.py  # Dashboard(AccessControlledModel) + provision/resetToDefaults/listForUser
   rest/dashboard.py    # Dashboard(Resource) at /api/v1/dashboard
-  rest/precipitate.py  # \
-  precipitate/         #  > the Precipitate Analysis dashboard — see docs/precipitate.md
-  worker_plugin/       # /
-  tests/               # conftest.py + test_dashboard.py, test_precipitate_analysis.py,
-                       #   test_precipitate_rest.py, test_precipitate_scale.py (131 tests)
-test/browser/          # end-to-end browser check: seed.py + micrograph.py + verify.cjs (132 checks)
-test/fidelity/         # compare_to_original.py — the port vs the research scripts, by hand
+  tests/               # conftest.py + test_dashboard.py (32 tests)
+test/browser/          # end-to-end browser check: seed.py + verify.cjs (~60 checks)
 .github/workflows/     # build-test.yaml: `test` job (lint + pytest), `browser` job (e2e)
   web_client/
     main.js            # entry: sidebar wrap, built-in registration, registerPluginNamespace
@@ -90,9 +89,7 @@ test/fidelity/         # compare_to_original.py — the port vs the research scr
     models/ collections/
     views/             # DashboardListView, DashboardRunView, ConfigView, EditDashboardWidget
     dashboards/
-      DataOverviewDashboard.js       # worked example
-      PrecipitateDashboard.js        # \ the stepper and its views —
-      precipitate/                   # / see docs/precipitate.md
+      DataOverviewDashboard.js       # the one bundled dashboard, as a worked example
     templates/*.pug  stylesheets/*.styl
     vite.config.ts     # UMD lib build -> dist/girder-plugin-dashboards.umd.cjs + style.css
 ```
@@ -145,8 +142,6 @@ All under `/api/v1/dashboard`. Every response carries `available`.
 | `DELETE /dashboard/{id}` | site admin | Only when `available` is false |
 | `GET`/`PUT /dashboard/{id}/access` | doc ADMIN | ACL |
 
-The Precipitate dashboard adds `/api/v1/precipitate` — see `docs/precipitate.md`.
-
 ## Commands
 
 Python (a repo-local `venv/` already exists with `girder`, `pytest-girder`, `ruff`, and this
@@ -160,8 +155,9 @@ tox -e pytest   /   tox -e lint                # equivalents (pytest env pulls t
 ```
 
 Dependencies are installed from **PyPI**, not as editable installs from the sibling `../girder`
-checkouts (`girder-jobs` and `girder-plugin-worker` came from PyPI at 5.0.13). The analysis stack is
-the `precipitate` extra: `venv/bin/pip install -e '.[precipitate]'`.
+checkout. `girder-dashboards-precipitate` is installed editable from `../girder-dashboards-precipitate`,
+so the venv holds both plugins; a test run here loads only this one (`pytest.mark.plugin("dashboards")`),
+but a `girder serve` from this venv loads both.
 
 Web client, from `girder_dashboards/web_client/` (`node_modules/` already installed):
 
@@ -187,33 +183,40 @@ for that and the rest of the harness (pytest gotchas, smoke run, browser checks,
 
 Sibling plugins are live-mounted into the `girder` service of the Whole Tale dev stack as
 `/girder-plugins/NN-<name>` (see `../deploy-dev/docker-stack.yml`; jsonforms is `05-`). This plugin
-**is** mounted into `girder` as `06-girder-dashboards`, but **not into `local_worker`** — which only
-matters for the Precipitate dashboard's Celery path; the details and the two fixes needed are in
-`docs/precipitate.md`.
+**is** mounted into `girder` as `06-girder-dashboards`. It needs nothing in `local_worker` — it has
+no Celery work of its own. `girder-dashboards-precipitate` does; see that repo's CLAUDE.md.
 
-## Status (2026-07-26)
+## Status (2026-07-27)
 
-**Feature-complete and verified end to end, including the Precipitate Analysis dashboard.**
+**Feature-complete and verified end to end.** Precipitate Analysis was extracted into
+`../girder-dashboards-precipitate` on 2026-07-27, following `docs/extending.md`; this repo is now
+the framework plus one worked example.
 
-- Server: **131** pytest tests pass, `ruff check` clean, `tox -e lint,pytest` rehearsed as CI runs
-  it.
-- Build: `npm run build` succeeds (232 kB UMD / 74 kB gzipped, up from 28 kB — that is Chart.js —
-  plus 14 kB CSS); the bundle still references only the `girder` global.
-- API, live against MongoDB: both dashboards provision and `system/plugin_static_files` lists both
-  assets.
-- Browser: **132/132** checks in `test/browser/verify.cjs`, screenshots reviewed. The 98 that
-  predate the scale/panel work were run twice, once with a Celery worker and once without; the 20
-  scale/panel ones, the 7 authors ones and the 7 busy-state ones, on the in-process path only.
+- Server: **32** pytest tests pass, `ruff check` clean.
+- Build: `npm run build` succeeds — **29 kB UMD / 7 kB gzipped** plus 7 kB CSS, down from 232 kB,
+  which is Chart.js leaving with the dashboard that needed it. `chart.js` is no longer a dependency.
+  The bundle references only the `girder` global.
+- Packaging: `pip wheel` produces `girder_dashboards-0.2.0-py3-none-any.whl` carrying exactly the
+  two `web_client/dist` artifacts and no tests, and declaring only the `girder.plugin` entry point.
+- Live, with **both** plugins installed: both dashboards provision, `system/plugin_static_files`
+  lists this bundle *before* the precipitate one (which is what the load-order rule buys), and
+  `GET /dashboard` returns both.
+- Browser: run **both** ways, screenshots reviewed.
+  - **62/62** against an instance that also had `girder-dashboards-precipitate` installed, so the
+    "disabling one dashboard leaves the others enabled" check had a real second dashboard to act on.
+  - **61/61** with this plugin alone, where that one check logs
+    `SKIP  REQ3 disabling one leaves the others enabled  [only one dashboard installed — install
+    another plugin to cover this]` rather than passing quietly. Both configurations matter: the
+    harness has to work for someone who installed only this.
+- The precipitate half is verified separately — **74/74** checks in that repo's harness, against
+  the same running instance, and 74/74 again with a real Celery worker. Total across both: 136.
 - Authors byline: verified on the gallery card, the config table and the settings dialog, including
   the admin edit round trip (edit → reload → reset). Run against a database provisioned *before*
   the field existed, so the `provision()` backfill is verified too, not just asserted.
-- Precipitate specifics (fidelity, both execution paths, scale detection): see the verification
-  status in `docs/precipitate.md`.
 
 ### Defects the browser pass found and fixed
 
-Worth knowing about, because none of them were visible to the Python tests or the build. The
-precipitate ones are in `docs/precipitate.md`; these two are core:
+Worth knowing about, because none of them were visible to the Python tests or the build:
 
 1. **`DataOverviewDashboard` fired `GET /user` anonymously.** That endpoint is `@access.user`, so
    every anonymous visit logged a 401 and showed a `—` tile. Now the tile list is filtered by
@@ -234,6 +237,11 @@ being copied out of girder-wholetale — ours names `girder-dashboards`, so don'
 
 ## Possible follow-ups
 
-Mount the plugin into `local_worker` and install the `precipitate` extra in the dev stack; a
-release workflow if the package should go to PyPI (see `docs/testing.md`); Codecov upload.
-Precipitate-specific ideas are listed at the end of `docs/precipitate.md`.
+A release workflow if the package should go to PyPI (see `docs/testing.md`); Codecov upload.
+
+The **0.2.0 version bump is a breaking change** and should be released as one: an existing
+deployment that upgrades without also installing `girder-dashboards-precipitate` keeps its
+`precipitate-analysis` *document* (with the admin's settings and ACL intact) but the key no longer
+resolves, so the dashboard goes `available: false` — hidden from the gallery, still listed on the
+config page, and deletable. Installing the new package brings it back exactly as it was. That is
+the `available` flag working as designed, but it will look like data loss if nobody says so first.
