@@ -1,0 +1,4 @@
+{
+  "extends": "@girder/pug-lint-config",
+  "excludeFiles": ["node_modules/**", "dist/**"]
+}

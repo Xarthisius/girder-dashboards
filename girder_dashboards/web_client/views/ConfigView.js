@@ -8,6 +8,7 @@ const $ = girder.$;
 const View = girder.views.View;
 const events = girder.events;
 const { restRequest } = girder.rest;
+const { confirm } = girder.dialog;
 const AccessWidget = girder.views.widgets.AccessWidget;
 const PluginConfigBreadcrumbWidget = girder.views.widgets.PluginConfigBreadcrumbWidget;
 
@@ -67,17 +68,21 @@ var ConfigView = View.extend({
         'click .g-dashboard-delete': function (event) {
             event.preventDefault();
             const dashboard = this._dashboardFor($(event.currentTarget));
-            if (!window.confirm(`Remove the leftover "${dashboard.get('name')}" dashboard?`)) {
-                return;
-            }
-            restRequest({
-                url: `dashboard/${dashboard.id}`,
-                method: 'DELETE',
-                error: null
-            }).done(() => {
-                this.collection.remove(dashboard);
-                this.render();
-            }).fail((err) => this._showError(err));
+            confirm({
+                text: `Remove the leftover "${dashboard.get('name')}" dashboard? ` +
+                    'Its settings and access list will be lost.',
+                yesText: 'Remove',
+                confirmCallback: () => {
+                    restRequest({
+                        url: `dashboard/${dashboard.id}`,
+                        method: 'DELETE',
+                        error: null
+                    }).done(() => {
+                        this.collection.remove(dashboard);
+                        this.render();
+                    }).fail((err) => this._showError(err));
+                }
+            });
         }
     },
 

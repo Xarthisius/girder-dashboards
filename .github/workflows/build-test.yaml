@@ -49,6 +49,12 @@ jobs:
           cd girder_dashboards/web_client
           npm ci
           npm run build
+      # eslint/pug-lint/stylelint with girder core's own shared configs, so the
+      # web client is held to the same conventions as the plugins in-tree.
+      - name: Lint web client
+        run: |
+          cd girder_dashboards/web_client
+          npm run lint
       - name: Cache tox environments
         uses: actions/cache@v4
         with:

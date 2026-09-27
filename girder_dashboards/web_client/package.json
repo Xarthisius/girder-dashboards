@@ -1,6 +1,6 @@
 {
   "name": "@girder/girder-plugin-dashboards",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lightweight, interactive dashboards for Girder",
   "type": "module",
   "files": [
@@ -19,12 +19,26 @@
   },
   "scripts": {
     "build": "vite build",
-    "dev": "vite build --watch"
+    "dev": "vite build --watch",
+    "lint": "eslint . && pug-lint . && stylelint \"stylesheets/**/*.styl\"",
+    "format": "eslint --fix ."
   },
   "author": "Kacper Kowalik",
   "license": "BSD-3-Clause",
   "devDependencies": {
+    "@girder/eslint-config": "^3.2.17",
+    "@girder/pug-lint-config": "^3.2.17",
+    "eslint": "^8.57.1",
+    "eslint-config-semistandard": "^17.0.0",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-backbone": "^2.1.1",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^15.7.0",
+    "eslint-plugin-promise": "^6.6.0",
     "pug": "^3.0.2",
+    "pug-lint": "^2.7.0",
+    "stylelint": "^16.26.1",
+    "stylelint-stylus": "^1.0.0",
     "stylus": "^0.64.0",
     "vite": "^8.0.0"
   }

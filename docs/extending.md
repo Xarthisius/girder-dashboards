@@ -292,6 +292,12 @@ export default defineConfig({
 `"scripts": {"build": "vite build", "dev": "vite build --watch"}`. Pug and Stylus are conveniences,
 not requirements — a template literal and a plain `.css` import work fine.
 
+If you do use them, copy this repo's `.eslintrc.json`, `.pug-lintrc.json` and `.stylelintrc.json`
+(plus the matching devDependencies and the `lint` script) as well. They extend core's own shared
+configs, so your plugin is held to the same rules as everything in `girder/plugins` — the pug
+attribute-continuation indent in particular is **+4**, which is easy to get wrong by hand and
+silent until a linter runs. `../girder/WEB_CLIENT_CONVENTIONS.md` is the reference.
+
 ### Styling
 
 Your `style.css` is a separate `<link>`; there is no shared token file at runtime. Prefix classes
