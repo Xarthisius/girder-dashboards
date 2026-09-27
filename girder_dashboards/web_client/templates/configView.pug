@@ -23,10 +23,10 @@ else
         tr(data-id=dashboard.id, class=dashboard.available ? '' : 'g-dashboard-row-unavailable')
           td.g-dashboards-col-enabled
             input.g-dashboard-enabled-toggle(
-              type="checkbox",
-              checked=dashboard.enabled,
-              disabled=!dashboard.available,
-              title=dashboard.available ? 'Offer this dashboard to users' : 'The implementation of this dashboard is not installed')
+                type="checkbox",
+                checked=dashboard.enabled,
+                disabled=!dashboard.available,
+                title=dashboard.available ? 'Offer this dashboard to users' : 'The implementation of this dashboard is not installed')
           td.g-dashboards-col-media
             if dashboard.image
               img.g-dashboard-config-thumb(src=dashboard.image, alt="")

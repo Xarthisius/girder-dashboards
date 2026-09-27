@@ -164,6 +164,8 @@ Web client, from `girder_dashboards/web_client/` (`node_modules/` already instal
 ```bash
 npm run build     # vite build -> dist/
 npm run dev       # vite build --watch
+npm run lint      # eslint . && pug-lint . && stylelint stylesheets/**/*.styl
+npm run format    # eslint --fix .
 ```
 
 **Build before running the Python tests** — with no bundle in `web_client/dist`, `load()` raises
@@ -178,6 +180,13 @@ for that and the rest of the harness (pytest gotchas, smoke run, browser checks,
   import; core is the runtime `girder` global, injected before plugin scripts load. `$.fn.girderModal`
   and `$.fn.girderEnable` are available without importing anything.
 - **Styles**: Stylus, tokens in `stylesheets/variables.styl`, all class names `g-`-prefixed.
+- **Web-client linting** is core's own, not a local dialect: `.eslintrc.json` extends
+  `@girder` (semistandard: 4-space indent, single quotes, semicolons, `import/order`,
+  `import/exports-last`, the `backbone/*` rules), `.pug-lintrc.json` extends
+  `@girder/pug-lint-config` (2-space pug, attributes broken across lines indent **+4**, not
+  +2), and `.stylelintrc.json` extends `stylelint-stylus/standard`. `npm run lint` runs all
+  three and CI runs it right after the build. The full rationale for each rule is in
+  `../girder/WEB_CLIENT_CONVENTIONS.md` — read it before adding UI.
 
 ## Deployment
 
