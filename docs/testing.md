@@ -31,7 +31,7 @@ plugins bring their own suite and their own harness — see
 
 ```bash
 GIRDER_MONGO_URI=mongodb://localhost:27017/girder_dashboards_smoke \
-  venv/bin/girder serve --host 127.0.0.1 --port 8989
+  uv run girder serve --host 127.0.0.1 --port 8989
 ```
 
 The installed girder wheel serves the built core web client at `/`, so the whole UI is
@@ -55,7 +55,7 @@ that needs a second dashboard — that a config-page toggle acts on one dashboar
 
 # then, against a running Girder:
 GIRDER_MONGO_URI=mongodb://localhost:27017/girder_dashboards_ci \
-  venv/bin/girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
+  uv run girder serve --host 127.0.0.1 --port 8989 > girder.log 2>&1 &
 python3 test/browser/seed.py       # admin, the bundled dashboard enabled, sample collections
 node test/browser/verify.cjs       # 62/62 expected
 ```
@@ -83,7 +83,7 @@ runs on pushes to `main`, on PRs, and on demand. Two jobs, both on `ubuntu-24.04
 
 - **`test`** — `npm ci && npm run build`, then `tox -e lint`, then `tox -e pytest`. The build step
   is load-bearing, not cosmetic; see the warning above.
-- **`browser`** — `pip install -e .`, build the web client, `npm ci` + `playwright
+- **`browser`** — `uv pip install --system -e .`, build the web client, `npm ci` + `playwright
   install chromium` in `test/browser`, start `girder serve` on 8989 with a wait loop, `seed.py`, then
   `verify.cjs`. Screenshots and `girder.log` upload as an artifact on every run (`if: always()`),
   which is what you want when a headless failure needs diagnosing. There is no broker in CI, so this

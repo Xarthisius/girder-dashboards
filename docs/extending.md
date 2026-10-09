@@ -404,7 +404,7 @@ error, page error or failed request, and read the screenshots. Both defects list
 ## Verification of this recipe
 
 Done on 2026-07-27 by building the `girder-dashboard-hello` plugin exactly as written above, in a
-scratch directory outside this repository, installing it into `venv/` alongside `girder-dashboards`
+scratch directory outside this repository, installing it into the dev venv alongside `girder-dashboards`
 and removing it afterwards.
 
 Verified:

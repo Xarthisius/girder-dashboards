@@ -1,3 +1,45 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "girder-dashboards"
+version = "0.2.0"
+description = "Girder plugin adding lightweight, interactive dashboards"
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Kacper Kowalik" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+# Deliberately only girder. A dashboard that needs jobs, a Celery worker or a
+# scientific stack declares those itself, in its own distribution — see
+# docs/extending.md and girder-dashboards-precipitate.
+dependencies = [
+    "girder>=5.0.13.dev27",
+]
+
+[project.entry-points."girder.plugin"]
+dashboards = "girder_dashboards:DashboardsPlugin"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-girder",
+]
+
+[tool.setuptools.packages.find]
+include = ["girder_dashboards*"]
+exclude = ["girder_dashboards.tests*"]
+
+[tool.pytest.ini_options]
+cache_dir = "build/test/pytest_cache"
+junit_family = "xunit2"
+testpaths = ["girder_dashboards/tests"]

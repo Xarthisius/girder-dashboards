@@ -144,20 +144,26 @@ All under `/api/v1/dashboard`. Every response carries `available`.
 
 ## Commands
 
-Python (a repo-local `venv/` already exists with `girder`, `pytest-girder`, `ruff`, and this
-package installed editable):
+Packaging is **uv**-driven: PEP 621 metadata in `pyproject.toml` (no `setup.py`), dev
+dependencies in a PEP 735 `[dependency-groups] dev` (no `requirements-dev.txt`), and `uv.lock`
+committed. `tox.ini` declares `requires = tox-uv`, so every tox env is built by `uv venv` /
+`uv pip install` and hardlinks out of the shared `~/.cache/uv` instead of copying a few hundred
+MB per env. The lock governs `uv sync` only — tox resolves fresh, so CI still catches upstream
+girder breakage.
 
 ```bash
-venv/bin/pytest girder_dashboards/tests -q     # 131 tests; needs MongoDB on :27017
-venv/bin/ruff check .
-venv/bin/ruff format girder_dashboards
+uv sync                                        # create/refresh .venv (project editable + dev group)
+uv run pytest girder_dashboards/tests -q       # 32 tests; needs MongoDB on :27017
+uvx ruff check .
+uvx ruff format girder_dashboards
 tox -e pytest   /   tox -e lint                # equivalents (pytest env pulls the extra)
+uv build                                       # sdist + wheel
 ```
 
 Dependencies are installed from **PyPI**, not as editable installs from the sibling `../girder`
-checkout. `girder-dashboards-precipitate` is installed editable from `../girder-dashboards-precipitate`,
-so the venv holds both plugins; a test run here loads only this one (`pytest.mark.plugin("dashboards")`),
-but a `girder serve` from this venv loads both.
+checkout. Nothing here depends on any `girder-dashboards-*` consumer plugin; if you want one in
+`.venv` to drive a `girder serve` by hand, `uv pip install -e <path>` it and use `uv sync
+--inexact` afterwards, since a plain `uv sync` is exact and prunes it.
 
 Web client, from `girder_dashboards/web_client/` (`node_modules/` already installed):
 
